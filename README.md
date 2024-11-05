@@ -31,4 +31,11 @@ docker run -p 8080:8080 --env-file .env.development fennel
 
 ### Deploying the Container to Cloud Run
 
-Details to come.
+TODO: come up with some way to make unique tags.
+
+```bash
+docker build --platform linux/amd64 . --tag us-central1-docker.pkg.dev/sunny-atrium-395301/fennel/v1:<YOUR-TAG>
+docker push us-central1-docker.pkg.dev/sunny-atrium-395301/fennel/v1:<YOUR-TAG>
+```
+
+_Note: platform is required for the build to work on Apple Silicon._
