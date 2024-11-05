@@ -1,7 +1,7 @@
 {
-  "name": "your-app-name",
+  "name": "fennel",
   "version": "1.0.0",
-  "description": "Your application description",
+  "description": "Fennel",
   "main": "index.js",
   "scripts": {
     "start": "node dist/index.js",
