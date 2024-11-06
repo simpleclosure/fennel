@@ -1,0 +1,7 @@
+export const RETRYABLE_ERROR_PATTERNS = [
+  '404',
+  'net::ERR_FAILED',
+  'net::ERR_CONNECTION_REFUSED',
+  'net::ERR_HTTP_RESPONSE_CODE_FAILURE',
+  'net::ERR_CONNECTION_TIMED_OUT',
+] as const

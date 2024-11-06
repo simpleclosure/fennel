@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { Request, Response } from 'express'
 import { chromium } from 'playwright'
+import { RETRYABLE_ERROR_PATTERNS } from '../../../lib/consts'
 import {
   getInfoFromAccount,
   getStepFromAccount,
@@ -45,7 +46,10 @@ export default async function handler(req: Request, res: Response) {
     const relatedStepId = task.related_step
 
     if (!relatedTaskId || !relatedStepId) {
-      throw new Error('Related task or step information missing from task data')
+      return res.status(400).json({
+        success: false,
+        error: 'Related task or step information missing from task data',
+      })
     }
 
     const [relatedTask, relatedStep] = await Promise.all([
@@ -71,7 +75,6 @@ export default async function handler(req: Request, res: Response) {
       message: 'Dissolution form submitted successfully',
       data: {
         serviceRequestNumber,
-        timestamp: new Date().toISOString(),
       },
     })
   } catch (error: any) {
@@ -494,12 +497,9 @@ async function submitDelawareForm(
         lastError = error
         console.error(`Attempt ${attempt} failed:`, error.message)
 
-        const isRetryableError =
-          error.message.includes('404') ||
-          error.message.includes('net::ERR_FAILED') ||
-          error.message.includes('net::ERR_CONNECTION_REFUSED') ||
-          error.message.includes('net::ERR_HTTP_RESPONSE_CODE_FAILURE') ||
-          error.message.includes('net::ERR_CONNECTION_TIMED_OUT')
+        const isRetryableError = RETRYABLE_ERROR_PATTERNS.some((pattern) =>
+          error.message.includes(pattern)
+        )
 
         if (!isRetryableError || attempt === MAX_RETRIES) {
           console.error(error)
@@ -519,12 +519,9 @@ async function submitDelawareForm(
     lastError = error
     console.error(`Attempt failed:`, error.message)
 
-    const isRetryableError =
-      error.message.includes('404') ||
-      error.message.includes('net::ERR_FAILED') ||
-      error.message.includes('net::ERR_CONNECTION_REFUSED') ||
-      error.message.includes('net::ERR_HTTP_RESPONSE_CODE_FAILURE') ||
-      error.message.includes('net::ERR_CONNECTION_TIMED_OUT')
+    const isRetryableError = RETRYABLE_ERROR_PATTERNS.some((pattern) =>
+      error.message.includes(pattern)
+    )
 
     if (!isRetryableError) {
       console.error(error)
