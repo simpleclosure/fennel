@@ -70,6 +70,13 @@ export default async function handler(req: Request, res: Response) {
       phase
     )
 
+    if (!serviceRequestNumber) {
+      return res.status(500).json({
+        success: false,
+        message: 'Dissolution form submission failed, see attached screenshots',
+      })
+    }
+
     res.status(200).json({
       success: true,
       message: 'Dissolution form submitted successfully',
@@ -319,7 +326,7 @@ async function fillInitialDelawareForm(
       accountInfo.company_name
     )
     await submitFormAndHandleModal(page)
-
+    console.info('Initial form submitted, moving onto payment...')
     return formScreenshotBuffer
   } catch (error) {
     throw error
@@ -361,85 +368,88 @@ async function submitFormAndHandleModal(page: any) {
 }
 
 async function handlePaymentAndSubmission(page: any) {
-  await page.selectOption(
-    'select[formcontrolname="paymentType"]',
-    PaymentType.CREDITCARD
-  )
+  try {
+    console.info('Handling payment and submission...')
+    await page.selectOption(
+      'select[formcontrolname="paymentType"]',
+      PaymentType.CREDITCARD
+    )
 
-  await page.fill(
-    'input[formcontrolname="cardNumber"]',
-    process.env.DELAWARE_CARD_NUMBER!
-  )
-  await page.fill(
-    'input[formcontrolname="cVVNumber"]',
-    process.env.DELAWARE_CARD_CVV!
-  )
-  await page.selectOption(
-    'select[formcontrolname="expirationMonth"]',
-    process.env.DELAWARE_CARD_MONTH!
-  )
-  await page.selectOption(
-    'select[formcontrolname="expirationYear"]',
-    process.env.DELAWARE_CARD_YEAR!
-  )
+    await page.fill(
+      'input[formcontrolname="cardNumber"]',
+      process.env.DELAWARE_CARD_NUMBER!
+    )
+    await page.fill(
+      'input[formcontrolname="cVVNumber"]',
+      process.env.DELAWARE_CARD_CVV!
+    )
+    await page.selectOption(
+      'select[formcontrolname="expirationMonth"]',
+      process.env.DELAWARE_CARD_MONTH!
+    )
+    await page.selectOption(
+      'select[formcontrolname="expirationYear"]',
+      process.env.DELAWARE_CARD_YEAR!
+    )
 
-  await page.fill(
-    'input[formcontrolname="firstName"]',
-    process.env.DELAWARE_BILLING_FIRST_NAME!
-  )
-  await page.fill(
-    'input[formcontrolname="lastName"]',
-    process.env.DELAWARE_BILLING_LAST_NAME!
-  )
+    await page.fill(
+      'input[formcontrolname="firstName"]',
+      process.env.DELAWARE_BILLING_FIRST_NAME!
+    )
+    await page.fill(
+      'input[formcontrolname="lastName"]',
+      process.env.DELAWARE_BILLING_LAST_NAME!
+    )
 
-  await page.fill(
-    '[formgroupname="payment"] input[formcontrolname="address1"]',
-    '44 Billing St'
-  )
-  await page.fill(
-    '[formgroupname="payment"] input[formcontrolname="address2"]',
-    'Addy 2'
-  )
-  await page.fill(
-    '[formgroupname="payment"] input[formcontrolname="city"]',
-    'City'
-  )
-  await page.selectOption(
-    '[formgroupname="payment"] select[formcontrolname="stateId"]',
-    '9'
-  )
-  await page.fill(
-    '[formgroupname="payment"] input[formcontrolname="postalCode"]',
-    '11111'
-  )
-  await page.selectOption(
-    '[formgroupname="payment"] select[formcontrolname="countryId"]',
-    '230'
-  )
-  await page.fill(
-    '[formgroupname="payment"] input[formcontrolname="email"]',
-    'jdaubert@simpleclosure.com'
-  )
-  await page.fill(
-    '[formgroupname="payment"] kendo-maskedtextbox[formcontrolname="phone"] input',
-    '12351234'
-  )
+    // Production
+    await page.fill(
+      '[formgroupname="payment"] input[formcontrolname="address1"]',
+      '440 North Barranca Avenue'
+    )
+    await page.fill(
+      '[formgroupname="payment"] input[formcontrolname="address2"]',
+      '7373'
+    )
+    await page.fill(
+      '[formgroupname="payment"] input[formcontrolname="city"]',
+      'Covina'
+    )
+    await page.selectOption(
+      '[formgroupname="payment"] select[formcontrolname="stateId"]',
+      '9'
+    )
+    await page.fill(
+      '[formgroupname="payment"] input[formcontrolname="postalCode"]',
+      '91723'
+    )
+    await page.selectOption(
+      '[formgroupname="payment"] select[formcontrolname="countryId"]',
+      '230'
+    )
+    await page.fill(
+      '[formgroupname="payment"] input[formcontrolname="email"]',
+      'notices@simpleclosure.com'
+    )
+    await page.fill(
+      '[formgroupname="payment"] kendo-maskedtextbox[formcontrolname="phone"] input',
+      '7024016434'
+    )
 
-  // Production
-  // await page.fill('[formgroupname="payment"] input[formcontrolname="address1"]', '440 North Barranca Avenue')
-  // await page.fill('[formgroupname="payment"] input[formcontrolname="address2"]', '7373')
-  // await page.fill('[formgroupname="payment"] input[formcontrolname="city"]', 'Covina')
-  // await page.selectOption('[formgroupname="payment"] select[formcontrolname="stateId"]', '9')
-  // await page.fill('[formgroupname="payment"] input[formcontrolname="postalCode"]', '91723')
-  // await page.selectOption('[formgroupname="payment"] select[formcontrolname="countryId"]', '230')
-  // await page.fill('[formgroupname="payment"] input[formcontrolname="email"]', 'notices@simpleclosure.com')
-  // await page.fill('[formgroupname="payment"] kendo-maskedtextbox[formcontrolname="phone"] input', '7024016434')
+    await page.waitForTimeout(1000)
+    await page.click('button[type="submit"].btn-primary')
+    await page.waitForSelector(
+      'p:has-text("Your request has been successfully submitted")',
+      { timeout: 30000 }
+    )
+  } catch (error: any) {
+    console.error('Payment submission failed:', error.message)
 
-  await page.waitForTimeout(1000)
-  await page.click('button[type="submit"].btn-primary')
-  await page.waitForSelector(
-    'p:has-text("Your request has been successfully submitted")'
-  )
+    const errorScreenshot = await page.screenshot({
+      path: `payment-error-${Date.now()}.png`,
+      fullPage: true,
+    })
+    return errorScreenshot
+  }
 }
 
 async function submitDelawareForm(
@@ -467,7 +477,20 @@ async function submitDelawareForm(
           certificateBuffer
         )
 
-        await handlePaymentAndSubmission(page)
+        const paymentFailedScreenshot = await handlePaymentAndSubmission(page)
+        if (paymentFailedScreenshot) {
+          await uploadFile(
+            accountId,
+            `${phase}/${task.id}/Delaware-Form.png`,
+            formScreenshotBuffer
+          )
+          await uploadFile(
+            accountId,
+            `${phase}/${task.id}/Delaware-Payment-Error.png`,
+            paymentFailedScreenshot
+          )
+          return
+        }
         console.info('Payment and submission handled')
 
         const serviceRequestNumber = await extractServiceRequestNumber(page)

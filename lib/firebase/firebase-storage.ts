@@ -18,7 +18,7 @@ export async function uploadFile(
   path: string,
   buffer: any
 ) {
-  const fullpath = `accounts/${account_id}${path}`
+  const fullpath = `accounts/${account_id}/${path}`
   const file = storage
     .bucket(process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET)
     .file(fullpath)
