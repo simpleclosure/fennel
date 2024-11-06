@@ -452,7 +452,7 @@ async function handlePaymentAndSubmission(page: any) {
   }
 }
 
-async function submitDelawareForm(
+export async function submitDelawareForm(
   accountId: string,
   stepId: string,
   task: any,
