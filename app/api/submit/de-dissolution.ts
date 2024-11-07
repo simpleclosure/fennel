@@ -26,19 +26,21 @@ export default async function handler(req: Request, res: Response) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
-
+  console.log(`Received request ${JSON.stringify(req.body)}`)
   try {
-    const { accountId, stepId, taskId, phase } = req.body
+    const { accountId, stepId, taskId, phaseId } = req.body
 
-    if (!accountId || !stepId || !taskId || !phase) {
+    if (!accountId || !stepId || !taskId || !phaseId) {
+      console.error('Missing required fields:', req.body)
       return res.status(400).json({
         error: 'Missing required fields',
-        required: ['accountId', 'stepId', 'taskId', 'phase'],
+        required: ['accountId', 'stepId', 'taskId', 'phaseId'],
       })
     }
 
     const task = await getTaskFromAccount(accountId, taskId)
     if (!task) {
+      console.error(`Task not found for ID: ${taskId}`)
       throw new Error(`Task not found for ID: ${taskId}`)
     }
 
@@ -46,6 +48,7 @@ export default async function handler(req: Request, res: Response) {
     const relatedStepId = task.related_step
 
     if (!relatedTaskId || !relatedStepId) {
+      console.error('Related task or step information missing from task data')
       return res.status(400).json({
         success: false,
         error: 'Related task or step information missing from task data',
@@ -58,6 +61,7 @@ export default async function handler(req: Request, res: Response) {
     ])
 
     if (!relatedTask || !relatedStep) {
+      console.error('Failed to fetch related task or step data')
       throw new Error('Failed to fetch related task or step data')
     }
 
@@ -67,7 +71,7 @@ export default async function handler(req: Request, res: Response) {
       task,
       relatedTask,
       relatedStep,
-      phase
+      phaseId
     )
 
     if (!serviceRequestNumber) {
@@ -102,7 +106,7 @@ async function initializeBrowser() {
     }
   }
 
-  console.info('Launching browser in', 'development', 'mode')
+  console.info('Launching browser')
 
   try {
     browser = await chromium.launch({
@@ -430,10 +434,30 @@ async function handlePaymentAndSubmission(page: any) {
       '[formgroupname="payment"] input[formcontrolname="email"]',
       'notices@simpleclosure.com'
     )
-    await page.fill(
-      '[formgroupname="payment"] kendo-maskedtextbox[formcontrolname="phone"] input',
-      '7024016434'
-    )
+
+    // The phone field is super flaky, this helps
+    const phoneSelector =
+      '[formgroupname="payment"] kendo-maskedtextbox[formcontrolname="phone"] input'
+    await page.waitForSelector(phoneSelector, {
+      state: 'visible',
+      timeout: 10000,
+    })
+
+    await page.evaluate((selector: string) => {
+      const element = document.querySelector(selector)
+      if (element) {
+        ;(element as HTMLInputElement).value = ''
+      }
+    }, phoneSelector)
+
+    await page.focus(phoneSelector)
+    await page.type(phoneSelector, '7024016434', { delay: 100 })
+
+    const phoneValue = await page.$eval(phoneSelector, (el: any) => el.value)
+    if (!phoneValue || phoneValue.replace(/\D/g, '') !== '7024016434') {
+      console.warn('Phone number not properly filled, retrying...')
+      await page.fill(phoneSelector, '7024016434')
+    }
 
     await page.waitForTimeout(1000)
     await page.click('button[type="submit"].btn-primary')
@@ -458,7 +482,7 @@ export async function submitDelawareForm(
   task: any,
   relatedTask: any,
   relatedStep: any,
-  phase: string
+  phaseId: string
 ) {
   let lastError
 
@@ -481,12 +505,16 @@ export async function submitDelawareForm(
         if (paymentFailedScreenshot) {
           await uploadFile(
             accountId,
-            `${phase}/${task.id}/Delaware-Form.png`,
+            stepId,
+            task.id,
+            `Delaware-Form.png`,
             formScreenshotBuffer
           )
           await uploadFile(
             accountId,
-            `${phase}/${task.id}/Delaware-Payment-Error.png`,
+            stepId,
+            task.id,
+            `Delaware-Payment-Error.png`,
             paymentFailedScreenshot
           )
           return
@@ -500,7 +528,8 @@ export async function submitDelawareForm(
           page,
           accountId,
           serviceRequestNumber,
-          phase,
+          phaseId,
+          stepId,
           task,
           formScreenshotBuffer
         )
@@ -563,7 +592,8 @@ async function handleScreenshots(
   page: any,
   accountId: string,
   serviceRequestNumber: string,
-  phase: string,
+  phaseId: string,
+  stepId: string,
   task: any,
   formScreenshotBuffer: Buffer
 ) {
@@ -571,12 +601,14 @@ async function handleScreenshots(
     fullPage: true,
   })
 
-  const storageRoute = `${phase}/${task.id}/Delaware-Dissolution`
+  const storageRoute = `${phaseId}/${task.id}/Delaware-Dissolution`
   await Promise.all([
-    uploadFile(accountId, `${storageRoute}-Form.png`, formScreenshotBuffer),
+    uploadFile(accountId, stepId, task.id, `Form.png`, formScreenshotBuffer),
     uploadFile(
       accountId,
-      `${storageRoute}-Success-${serviceRequestNumber}.png`,
+      stepId,
+      task.id,
+      `Success-${serviceRequestNumber}.png`,
       successScreenshotBuffer
     ),
   ])

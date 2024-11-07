@@ -14,11 +14,13 @@ export const testRoute = async (req: Request, res: Response) => {
   if (!task) {
     throw new Error(`Task not found for ID: ${taskId}`)
   }
+  console.log('Task found:', task)
 
   const relatedTaskId = task.related_task
   const relatedStepId = task.related_step
 
   if (!relatedTaskId || !relatedStepId) {
+    console.error('Related task or step information missing from task data')
     return res.status(400).json({
       success: false,
       error: 'Related task or step information missing from task data',

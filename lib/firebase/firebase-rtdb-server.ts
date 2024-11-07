@@ -33,6 +33,18 @@ export async function setValueForAccount(
   return await setVal(fullpath, value)
 }
 
+export async function getGroupForStep(
+  accountId: string,
+  stepId: string
+): Promise<{ [key: string]: any } | undefined> {
+  const groups: { [key: string]: any } = await getVal(
+    `accounts/${accountId}/plan/groups`
+  )
+  return Object.values(groups).find((group: any) =>
+    group.step_ids.split(',').includes(stepId)
+  )
+}
+
 export async function getInfoFromAccount(aid: string) {
   return await getVal(`accounts/${aid}/info`)
 }

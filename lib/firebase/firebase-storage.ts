@@ -1,5 +1,6 @@
 import { getDownloadURL } from 'firebase-admin/storage'
 import { storage } from './firebase-config'
+import { getGroupForStep } from './firebase-rtdb-server'
 
 export const FILES_PREFIX = '/files'
 
@@ -13,15 +14,30 @@ async function downloadLink(file: any) {
   return shortenPublicUrl(url)
 }
 
+async function getRouteForTask(
+  accountId: string,
+  stepId: string,
+  taskId: string
+): Promise<string> {
+  const group = await getGroupForStep(accountId, stepId)
+  if (!group)
+    throw new Error(
+      `Could not generate route for accountId: ${accountId}, stepId: ${stepId} and task: ${taskId}`
+    )
+  return `accounts/${accountId}${group.route}/${taskId}`
+}
+
 export async function uploadFile(
   account_id: string,
-  path: string,
+  stepId: string,
+  taskId: string,
+  fileName: string,
   buffer: any
 ) {
-  const fullpath = `accounts/${account_id}/${path}`
+  const route = await getRouteForTask(account_id, stepId, taskId)
   const file = storage
     .bucket(process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET)
-    .file(fullpath)
+    .file(`${route}/${fileName}`)
 
   await file.save(buffer, { metadata: { metadata: { admin: 'admin' } } })
   return await downloadLink(file)
