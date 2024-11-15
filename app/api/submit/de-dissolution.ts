@@ -623,7 +623,7 @@ async function updateAccountRecords(
   const dissolvedAt = Date.now()
 
   await Promise.all([
-    setValueForAccount(accountId, 'details/operations', {
+    setValueForAccount(accountId, 'info', {
       de_dissolved_at: dissolvedAt,
     }),
     setTaskForAccount(accountId, task.id, {
