@@ -127,41 +127,61 @@ async function initializeBrowser() {
 }
 
 async function loginToDelaware(page: any) {
-  try {
-    console.info('Navigating to Delaware login page...')
-    const response = await page.goto(DELAWARE_LOGIN_URL, {
-      waitUntil: 'networkidle',
-      timeout: 30000,
-    })
+  let lastError
 
-    if (response) {
-      console.info('Response status:', response.status())
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      console.info(`Login attempt ${attempt}/${MAX_RETRIES}...`)
+      const response = await page.goto(DELAWARE_LOGIN_URL, {
+        waitUntil: 'networkidle',
+        timeout: 30000,
+      })
+
+      if (response) {
+        const status = response.status()
+        console.info('Response status:', status)
+        if (status === 404 && attempt < MAX_RETRIES) {
+          console.info(
+            `Received 404, retrying in ${RETRY_DELAY / 1000} seconds...`
+          )
+          await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY))
+          continue
+        }
+      }
+
+      console.info('Waiting for login form...')
+      await page.waitForSelector('input[formcontrolname="userName"]', {
+        state: 'visible',
+        timeout: 30000,
+      })
+
+      console.info('Filling login credentials...')
+      await page.fill(
+        'input[formcontrolname="userName"]',
+        process.env.DELAWARE_USERNAME!
+      )
+      await page.fill(
+        'input[formcontrolname="password"]',
+        process.env.DELAWARE_PASSWORD!
+      )
+
+      console.info('Submitting login form...')
+      await page.click('button[type="submit"]')
+
+      await page.waitForNavigation({ waitUntil: 'networkidle' })
+      console.info('Login completed successfully')
+      return // Success - exit the retry loop
+    } catch (error: any) {
+      lastError = error
+      console.error(`Login attempt ${attempt} failed:`, error.message)
+
+      if (attempt === MAX_RETRIES) {
+        console.error('Max retries reached, throwing error')
+        throw lastError
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY))
     }
-
-    console.info('Waiting for login form...')
-    await page.waitForSelector('input[formcontrolname="userName"]', {
-      state: 'visible',
-      timeout: 30000,
-    })
-
-    console.info('Filling login credentials...')
-    await page.fill(
-      'input[formcontrolname="userName"]',
-      process.env.DELAWARE_USERNAME!
-    )
-    await page.fill(
-      'input[formcontrolname="password"]',
-      process.env.DELAWARE_PASSWORD!
-    )
-
-    console.info('Submitting login form...')
-    await page.click('button[type="submit"]')
-
-    await page.waitForNavigation({ waitUntil: 'networkidle' })
-    console.info('Login completed successfully')
-  } catch (error: any) {
-    console.error('Login error:', error.message)
-    throw error
   }
 }
 
