@@ -20,6 +20,10 @@ const RETRY_DELAY = 5000
 const DELAWARE_LOGIN_URL = 'https://icis.corp.delaware.gov/ecorp2/account/login'
 const DELAWARE_EFILING_URL =
   'https://icis.corp.delaware.gov/ecorp2/services/e-filing'
+const DEMO_ACCOUNT_IDS = [
+  '1488613d-2a46-4c61-9f3a-c1f40bec1a8c',
+  '18ee11a1-7ba4-48ce-8c04-050cf83e119f',
+]
 let browser: any
 
 export default async function handler(req: Request, res: Response) {
@@ -126,7 +130,8 @@ async function initializeBrowser() {
   }
 }
 
-async function loginToDelaware(page: any) {
+async function loginToDelaware(page: any, accountId: string) {
+  console.info(`Logging in to Delaware for account ${accountId}`)
   let lastError
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
@@ -156,21 +161,36 @@ async function loginToDelaware(page: any) {
       })
 
       console.info('Filling login credentials...')
-      await page.fill(
-        'input[formcontrolname="userName"]',
-        process.env.DELAWARE_USERNAME!
-      )
-      await page.fill(
-        'input[formcontrolname="password"]',
-        process.env.DELAWARE_PASSWORD!
-      )
+      if (DEMO_ACCOUNT_IDS.includes(accountId)) {
+        console.info(
+          `Filling login credentials for demo account ${accountId} with username ${process
+            .env.DEMO_ACCOUNT_USERNAME!}`
+        )
+        await page.fill(
+          'input[formcontrolname="userName"]',
+          process.env.DEMO_ACCOUNT_USERNAME!
+        )
+        await page.fill(
+          'input[formcontrolname="password"]',
+          process.env.DEMO_ACCOUNT_PASSWORD!
+        )
+      } else {
+        await page.fill(
+          'input[formcontrolname="userName"]',
+          process.env.DELAWARE_USERNAME!
+        )
+        await page.fill(
+          'input[formcontrolname="password"]',
+          process.env.DELAWARE_PASSWORD!
+        )
+      }
 
       console.info('Submitting login form...')
       await page.click('button[type="submit"]')
 
       await page.waitForNavigation({ waitUntil: 'networkidle' })
       console.info('Login completed successfully')
-      return // Success - exit the retry loop
+      return
     } catch (error: any) {
       lastError = error
       console.error(`Login attempt ${attempt} failed:`, error.message)
@@ -277,7 +297,7 @@ async function initializeSubmission(
   await initializeBrowser()
   const context = await browser.newContext()
   const page = await context.newPage()
-  await loginToDelaware(page)
+  await loginToDelaware(page, accountId)
 
   return {
     accountInfo,
@@ -391,92 +411,161 @@ async function submitFormAndHandleModal(page: any) {
   await page.waitForNavigation({ waitUntil: 'networkidle' })
 }
 
-async function handlePaymentAndSubmission(page: any) {
+async function fillDemoPaymentDetails(page: any) {
+  console.info(
+    `Filling payment details for demo account ${DEMO_ACCOUNT_IDS.join(', ')}`
+  )
+  await page.fill('input[formcontrolname="cardNumber"]', '4111111111111111')
+  await page.fill('input[formcontrolname="cVVNumber"]', '012')
+  await page.selectOption('select[formcontrolname="expirationMonth"]', '01')
+  await page.selectOption('select[formcontrolname="expirationYear"]', '2031')
+  await page.fill('input[formcontrolname="firstName"]', 'John')
+  await page.fill('input[formcontrolname="lastName"]', 'Doe')
+
+  await page.fill(
+    '[formgroupname="payment"] input[formcontrolname="address1"]',
+    '1 Main Street'
+  )
+  await page.fill(
+    '[formgroupname="payment"] input[formcontrolname="address2"]',
+    'Suite 100'
+  )
+  await page.fill(
+    '[formgroupname="payment"] input[formcontrolname="city"]',
+    'Albany'
+  )
+  await page.selectOption(
+    '[formgroupname="payment"] select[formcontrolname="stateId"]',
+    '36'
+  )
+  await page.fill(
+    '[formgroupname="payment"] input[formcontrolname="postalCode"]',
+    '12203'
+  )
+  await page.selectOption(
+    '[formgroupname="payment"] select[formcontrolname="countryId"]',
+    '230'
+  )
+  await page.fill(
+    '[formgroupname="payment"] input[formcontrolname="email"]',
+    'fikiyed441@cpaurl.com'
+  )
+
+  const phoneSelector =
+    '[formgroupname="payment"] kendo-maskedtextbox[formcontrolname="phone"] input'
+  await page.waitForSelector(phoneSelector, {
+    state: 'visible',
+    timeout: 10000,
+  })
+
+  await page.evaluate((selector: string) => {
+    const element = document.querySelector(selector)
+    if (element) {
+      ;(element as HTMLInputElement).value = ''
+    }
+  }, phoneSelector)
+
+  await page.focus(phoneSelector)
+  await page.type(phoneSelector, '1211111111', { delay: 100 })
+
+  const phoneValue = await page.$eval(phoneSelector, (el: any) => el.value)
+  if (!phoneValue || phoneValue.replace(/\D/g, '') !== '1211111111') {
+    console.warn('Phone number not properly filled, retrying...')
+    await page.fill(phoneSelector, '1211111111')
+  }
+}
+
+async function fillPaymentDetails(page: any) {
+  await page.fill(
+    'input[formcontrolname="cardNumber"]',
+    process.env.DELAWARE_CARD_NUMBER!
+  )
+  await page.fill(
+    'input[formcontrolname="cVVNumber"]',
+    process.env.DELAWARE_CARD_CVV!
+  )
+  await page.selectOption(
+    'select[formcontrolname="expirationMonth"]',
+    process.env.DELAWARE_CARD_MONTH!
+  )
+  await page.selectOption(
+    'select[formcontrolname="expirationYear"]',
+    process.env.DELAWARE_CARD_YEAR!
+  )
+
+  await page.fill(
+    'input[formcontrolname="firstName"]',
+    process.env.DELAWARE_BILLING_FIRST_NAME!
+  )
+  await page.fill(
+    'input[formcontrolname="lastName"]',
+    process.env.DELAWARE_BILLING_LAST_NAME!
+  )
+
+  await page.fill(
+    '[formgroupname="payment"] input[formcontrolname="address1"]',
+    '440 North Barranca Avenue'
+  )
+  await page.fill(
+    '[formgroupname="payment"] input[formcontrolname="address2"]',
+    '7373'
+  )
+  await page.fill(
+    '[formgroupname="payment"] input[formcontrolname="city"]',
+    'Covina'
+  )
+  await page.selectOption(
+    '[formgroupname="payment"] select[formcontrolname="stateId"]',
+    '9'
+  )
+  await page.fill(
+    '[formgroupname="payment"] input[formcontrolname="postalCode"]',
+    '91723'
+  )
+  await page.selectOption(
+    '[formgroupname="payment"] select[formcontrolname="countryId"]',
+    '230'
+  )
+  await page.fill(
+    '[formgroupname="payment"] input[formcontrolname="email"]',
+    'notices@simpleclosure.com'
+  )
+
+  const phoneSelector =
+    '[formgroupname="payment"] kendo-maskedtextbox[formcontrolname="phone"] input'
+  await page.waitForSelector(phoneSelector, {
+    state: 'visible',
+    timeout: 10000,
+  })
+
+  await page.evaluate((selector: string) => {
+    const element = document.querySelector(selector)
+    if (element) {
+      ;(element as HTMLInputElement).value = ''
+    }
+  }, phoneSelector)
+
+  await page.focus(phoneSelector)
+  await page.type(phoneSelector, '7024016434', { delay: 100 })
+
+  const phoneValue = await page.$eval(phoneSelector, (el: any) => el.value)
+  if (!phoneValue || phoneValue.replace(/\D/g, '') !== '7024016434') {
+    console.warn('Phone number not properly filled, retrying...')
+    await page.fill(phoneSelector, '7024016434')
+  }
+}
+
+async function handlePaymentAndSubmission(page: any, accountId: string) {
   try {
     console.info('Handling payment and submission...')
     await page.selectOption(
       'select[formcontrolname="paymentType"]',
       PaymentType.CREDITCARD
     )
-
-    await page.fill(
-      'input[formcontrolname="cardNumber"]',
-      process.env.DELAWARE_CARD_NUMBER!
-    )
-    await page.fill(
-      'input[formcontrolname="cVVNumber"]',
-      process.env.DELAWARE_CARD_CVV!
-    )
-    await page.selectOption(
-      'select[formcontrolname="expirationMonth"]',
-      process.env.DELAWARE_CARD_MONTH!
-    )
-    await page.selectOption(
-      'select[formcontrolname="expirationYear"]',
-      process.env.DELAWARE_CARD_YEAR!
-    )
-
-    await page.fill(
-      'input[formcontrolname="firstName"]',
-      process.env.DELAWARE_BILLING_FIRST_NAME!
-    )
-    await page.fill(
-      'input[formcontrolname="lastName"]',
-      process.env.DELAWARE_BILLING_LAST_NAME!
-    )
-
-    // Production
-    await page.fill(
-      '[formgroupname="payment"] input[formcontrolname="address1"]',
-      '440 North Barranca Avenue'
-    )
-    await page.fill(
-      '[formgroupname="payment"] input[formcontrolname="address2"]',
-      '7373'
-    )
-    await page.fill(
-      '[formgroupname="payment"] input[formcontrolname="city"]',
-      'Covina'
-    )
-    await page.selectOption(
-      '[formgroupname="payment"] select[formcontrolname="stateId"]',
-      '9'
-    )
-    await page.fill(
-      '[formgroupname="payment"] input[formcontrolname="postalCode"]',
-      '91723'
-    )
-    await page.selectOption(
-      '[formgroupname="payment"] select[formcontrolname="countryId"]',
-      '230'
-    )
-    await page.fill(
-      '[formgroupname="payment"] input[formcontrolname="email"]',
-      'notices@simpleclosure.com'
-    )
-
-    // The phone field is super flaky, this helps
-    const phoneSelector =
-      '[formgroupname="payment"] kendo-maskedtextbox[formcontrolname="phone"] input'
-    await page.waitForSelector(phoneSelector, {
-      state: 'visible',
-      timeout: 10000,
-    })
-
-    await page.evaluate((selector: string) => {
-      const element = document.querySelector(selector)
-      if (element) {
-        ;(element as HTMLInputElement).value = ''
-      }
-    }, phoneSelector)
-
-    await page.focus(phoneSelector)
-    await page.type(phoneSelector, '7024016434', { delay: 100 })
-
-    const phoneValue = await page.$eval(phoneSelector, (el: any) => el.value)
-    if (!phoneValue || phoneValue.replace(/\D/g, '') !== '7024016434') {
-      console.warn('Phone number not properly filled, retrying...')
-      await page.fill(phoneSelector, '7024016434')
+    if (DEMO_ACCOUNT_IDS.includes(accountId)) {
+      fillDemoPaymentDetails(page)
+    } else {
+      fillPaymentDetails(page)
     }
 
     await page.waitForTimeout(1000)
@@ -521,7 +610,10 @@ export async function submitDelawareForm(
           certificateBuffer
         )
 
-        const paymentFailedScreenshot = await handlePaymentAndSubmission(page)
+        const paymentFailedScreenshot = await handlePaymentAndSubmission(
+          page,
+          accountId
+        )
         if (paymentFailedScreenshot) {
           await uploadFile(
             accountId,
