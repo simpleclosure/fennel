@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { Request, Response } from 'express'
-import { chromium } from 'playwright'
+import { chromium } from 'playwright-extra'
+import StealthPlugin from 'puppeteer-extra-plugin-stealth'
 import { RETRYABLE_ERROR_PATTERNS } from '../../../lib/consts'
 import {
   getInfoFromAccount,
@@ -111,6 +112,7 @@ async function initializeBrowser() {
   }
 
   console.info('Launching browser')
+  chromium.use(StealthPlugin())
 
   try {
     browser = await chromium.launch({
