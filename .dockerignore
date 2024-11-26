@@ -38,6 +38,7 @@ test
 tests
 *.test.js
 *.spec.js
+app/api/testing/test.ts
 
 # Documentation
 docs
