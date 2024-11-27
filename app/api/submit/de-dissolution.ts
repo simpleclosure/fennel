@@ -279,8 +279,22 @@ async function initializeSubmission(
       (event) => event.type === TimelineEventType.STEP_COMPLETE
     )
     if (stepCompleteEvent?.file_url) {
+      console.log(
+        'Getting executed file url for step from timeline',
+        accountId,
+        relatedStep.id,
+        stepCompleteEvent.file_url
+      )
       fileUrl = stepCompleteEvent.file_url
     }
+  } else if (relatedStep?.goal_url) {
+    fileUrl = relatedStep.goal_url!
+    console.log(
+      'Getting executed file url for step from goal url',
+      accountId,
+      relatedStep.id,
+      fileUrl
+    )
   }
 
   if (!fileUrl) {
