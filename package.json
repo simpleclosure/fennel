@@ -11,10 +11,12 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
+    "@google-cloud/speech": "^6.7.0",
     "@types/express": "^4.x.x",
     "axios": "^1.7.7",
     "express": "^4.x.x",
     "firebase-admin": "^12.1.0",
+    "node-fetch": "^3.3.2",
     "playwright": "^1.48.1",
     "playwright-extra": "^4.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2"

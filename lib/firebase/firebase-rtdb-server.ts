@@ -49,6 +49,10 @@ export async function getInfoFromAccount(aid: string) {
   return await getVal(`accounts/${aid}/info`)
 }
 
+export async function getDetailsFromAccount(aid: string) {
+  return await getVal(`accounts/${aid}/details`)
+}
+
 export async function getStepFromAccount(aid: string, stepId: string) {
   return {
     id: stepId,

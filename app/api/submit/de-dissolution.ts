@@ -33,13 +33,13 @@ export default async function handler(req: Request, res: Response) {
   }
   console.log(`Received request ${JSON.stringify(req.body)}`)
   try {
-    const { accountId, stepId, taskId, phaseId } = req.body
+    const { accountId, stepId, taskId } = req.body
 
-    if (!accountId || !stepId || !taskId || !phaseId) {
+    if (!accountId || !stepId || !taskId) {
       console.error('Missing required fields:', req.body)
       return res.status(400).json({
         error: 'Missing required fields',
-        required: ['accountId', 'stepId', 'taskId', 'phaseId'],
+        required: ['accountId', 'stepId', 'taskId'],
       })
     }
 
@@ -75,8 +75,7 @@ export default async function handler(req: Request, res: Response) {
       stepId,
       task,
       relatedTask,
-      relatedStep,
-      phaseId
+      relatedStep
     )
 
     if (!serviceRequestNumber) {
@@ -592,8 +591,7 @@ export async function submitDelawareForm(
   stepId: string,
   task: any,
   relatedTask: any,
-  relatedStep: any,
-  phaseId: string
+  relatedStep: any
 ) {
   let lastError
 
@@ -642,7 +640,6 @@ export async function submitDelawareForm(
           page,
           accountId,
           serviceRequestNumber,
-          phaseId,
           stepId,
           task,
           formScreenshotBuffer
@@ -706,7 +703,6 @@ async function handleScreenshots(
   page: any,
   accountId: string,
   serviceRequestNumber: string,
-  phaseId: string,
   stepId: string,
   task: any,
   formScreenshotBuffer: Buffer
@@ -715,7 +711,6 @@ async function handleScreenshots(
     fullPage: true,
   })
 
-  const storageRoute = `${phaseId}/${task.id}/Delaware-Dissolution`
   await Promise.all([
     uploadFile(accountId, stepId, task.id, `Form.png`, formScreenshotBuffer),
     uploadFile(
