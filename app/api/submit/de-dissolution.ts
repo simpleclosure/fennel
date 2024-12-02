@@ -423,7 +423,15 @@ async function submitFormAndHandleModal(page: any) {
 
   await continueButton.click()
   await page.waitForSelector('.k-dialog', { state: 'visible' })
-  await page.click('.k-dialog .k-primary')
+
+  const proceedButton = await page.$('button:has-text("Proceed")')
+  if (proceedButton) {
+    await proceedButton.click()
+  } else {
+    throw new Error('"Proceed" button not found in modal')
+  }
+
+  // Wait for navigation to complete after handling the modal
   await page.waitForNavigation({ waitUntil: 'networkidle' })
 }
 
@@ -683,6 +691,17 @@ export async function submitDelawareForm(
 
         if (!isRetryableError || attempt === MAX_RETRIES) {
           console.error(error)
+          const errorScreenshot = await page.screenshot({
+            path: `submission-error-${Date.now()}.png`,
+            fullPage: true,
+          })
+          await uploadFile(
+            accountId,
+            stepId,
+            task.id,
+            `Submission-Error-${Date.now()}.png`,
+            errorScreenshot
+          )
           throw new Error(
             `Form not submitted after ${attempt} attempts. Last error: ${error.message}`
           )
