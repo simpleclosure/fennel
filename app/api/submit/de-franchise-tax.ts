@@ -10,6 +10,7 @@ import {
   getTableFromAccount,
   getTaskFromAccount,
   getUser,
+  setTaskForAccount,
 } from '../../../lib/firebase/firebase-rtdb-server'
 import { uploadFile } from '../../../lib/firebase/firebase-storage'
 
@@ -24,10 +25,13 @@ interface ValidationError {
   field?: string
 }
 
-async function validateAccountData(
+async function validateInput(
   accountInfo: any,
   accountDetails: any,
-  accountTable: any
+  accountTable: any,
+  task: any,
+  relatedTask: any,
+  taskToUnlock: any
 ) {
   const errors: ValidationError[] = []
 
@@ -77,6 +81,40 @@ async function validateAccountData(
     errors.push({
       field: 'boardmembers',
       message: 'At least one board member is required',
+    })
+  }
+
+  if (!task.related_task) {
+    errors.push({
+      field: 'related_task',
+      message: 'Task must have a related task',
+    })
+  }
+
+  if (
+    !task.unlocks ||
+    !Array.isArray(task.unlocks) ||
+    task.unlocks.length !== 1
+  ) {
+    errors.push({
+      field: 'unlocks',
+      message: 'Task must have exactly one unlock task',
+    })
+  }
+
+  if (!relatedTask?.invalue) {
+    errors.push({
+      field: 'related_task.invalue',
+      message: 'Related task must have an invalue set',
+    })
+  }
+
+  try {
+    getFileNumberFromTaskToUnlock(taskToUnlock)
+  } catch (error) {
+    errors.push({
+      field: 'task_to_unlock.body',
+      message: 'Task to unlock must contain a file number in its body',
     })
   }
 
@@ -259,18 +297,9 @@ async function fillAnticipatedTerminationDate(
   await page.waitForLoadState('networkidle')
 }
 
-//TODO in this method
-async function fillSharesInfo(
-  page: any,
-  accountId: string,
-  taskId: string,
-  accountInfo: any
-) {
+async function fillSharesInfo(page: any, relatedTask: any, accountInfo: any) {
   console.log('Starting to fill shares info...')
 
-  const task = await getTaskFromAccount(accountId, taskId)
-  const relatedTaskId = task.related_task
-  const relatedTask = await getTaskFromAccount(accountId, relatedTaskId)
   const grossAssetValue = relatedTask.invalue?.toString().split('.')[0] || '0'
 
   const commonSharesSelector =
@@ -305,7 +334,7 @@ async function fillSharesInfo(
 
   const futureDate = new Date()
   futureDate.setDate(futureDate.getDate() + 14)
-  const formattedDate = futureDate
+  const futureDateNoSlashes = futureDate
     .toLocaleDateString('en-US', {
       month: '2-digit',
       day: '2-digit',
@@ -316,7 +345,7 @@ async function fillSharesInfo(
   const assetDateSelector =
     '#ctl00_ContentPlaceHolder1_gridStock_ctl02_txtAssetDate'
   await page.fill(assetDateSelector, '')
-  for (const char of formattedDate) {
+  for (const char of futureDateNoSlashes) {
     await page.type(assetDateSelector, char, { delay: 100 })
   }
   await page.evaluate((selector: string) => {
@@ -326,7 +355,7 @@ async function fillSharesInfo(
 
   console.log('Filled common shares:', commonShares)
   console.log('Filled gross asset value:', grossAssetValue)
-  console.log('Filled asset date:', formattedDate)
+  console.log('Filled asset date:', futureDateNoSlashes)
   await page.click('#ctl00_ContentPlaceHolder1_btnRecalucation')
   await page.waitForLoadState('networkidle')
 
@@ -347,12 +376,10 @@ async function fillSharesInfo(
         `Warning: Franchise Tax Amount Due ($${amount}) exceeds recommended maximum ($3000)`
       )
     }
+    return { amountDue: amountDueText }
   } else {
-    console.warn('Amount due element not found on page')
+    throw new Error('Could not find amount due.')
   }
-  //TODO
-  // fill in amount due in task
-  // 7. Confirm cost is $___.
 }
 
 async function fillAddressInfo(page: any, accountDetails: any) {
@@ -527,13 +554,13 @@ async function fillBoardMembers(
 async function fillOfficerAuthorizationAndBoard(
   page: any,
   accountId: string,
-  taskId: string,
+  task: any,
   accountDetails: any,
   boardmembers: any[]
 ) {
   const officerInfo = await getOfficerInfo(
     accountId,
-    taskId,
+    task,
     accountDetails,
     boardmembers
   )
@@ -575,13 +602,12 @@ async function fillOfficerAuthorizationAndBoard(
 
 async function getOfficerInfo(
   accountId: string,
-  taskId: string,
+  task: any,
   accountDetails: any,
   boardmembers: any[]
 ) {
   console.log('Getting officer info...')
   console.log('Boardmembers:', boardmembers)
-  const task = await getTaskFromAccount(accountId, taskId)
   const relatedStepId = task.related_step
   const step = await getStepFromAccount(accountId, relatedStepId)
   const signerUid = step.signer_uid
@@ -616,7 +642,9 @@ async function generateFranchiseTaxReport(
   page: any,
   accountId: string,
   stepId: string,
-  taskId: string,
+  task: any,
+  relatedTask: any,
+  taskToUnlock: any,
   accountInfo: any,
   accountDetails: any,
   accountTable: any
@@ -654,14 +682,14 @@ async function generateFranchiseTaxReport(
         }
       }
 
-      await fillSharesInfo(page, accountId, taskId, accountInfo)
+      const { amountDue } = await fillSharesInfo(page, relatedTask, accountInfo)
       await fillAddressInfo(page, accountDetails)
       await fillPhoneNumber(page, accountDetails.company.business_phone)
 
       await fillOfficerAuthorizationAndBoard(
         page,
         accountId,
-        taskId,
+        task,
         accountDetails,
         Object.values(accountTable.boardmembers)
       )
@@ -672,7 +700,7 @@ async function generateFranchiseTaxReport(
       await uploadFile(
         accountId,
         stepId,
-        taskId,
+        task.id,
         'franchise-tax-report.png',
         screenshotBuffer
       )
@@ -697,8 +725,8 @@ async function generateFranchiseTaxReport(
       await uploadFile(
         accountId,
         stepId,
-        taskId,
-        'save-session.png',
+        task.id,
+        'session-confirmation.png',
         saveSessionScreenshot
       )
 
@@ -707,7 +735,7 @@ async function generateFranchiseTaxReport(
         await page.waitForSelector(
           '#ctl00_ContentPlaceHolder1_btnSaveSession',
           {
-            timeout: 5000,
+            timeout: 1000,
           }
         )
         await page.click('#ctl00_ContentPlaceHolder1_btnSaveSession')
@@ -730,11 +758,10 @@ async function generateFranchiseTaxReport(
       await uploadFile(
         accountId,
         stepId,
-        taskId,
-        'save-session-2.png',
+        task.id,
+        'save-session-final.png',
         saveSession2Screenshot
       )
-      // Wait for and extract both session number and expiration date
       const sessionNumberSelector =
         '#ctl00_ContentPlaceHolder1_lblSessionNumber'
       const expiryDateSelector =
@@ -754,12 +781,14 @@ async function generateFranchiseTaxReport(
 
       console.log('Session number:', sessionNumber)
       console.log('Expiry date:', expiryDate)
+      console.log('Amount due:', amountDue)
 
-      // Update the task with both session number and expiry date
-      // await updateTaskInAccount(accountId, taskId, {
-      //   session_number: sessionNumber,
-      //   session_expiry_date: expiryDate,
-      // })
+      await updateTaskWithSessionAndCost(
+        accountId,
+        taskToUnlock,
+        sessionNumber,
+        amountDue
+      )
 
       return { sessionNumber, expiryDate }
     } catch (error) {
@@ -800,14 +829,29 @@ export default async function handler(req: Request, res: Response) {
       })
     }
 
-    const [accountInfo, accountDetails, accountTable] = await Promise.all([
-      getInfoFromAccount(accountId),
-      getDetailsFromAccount(accountId),
-      getTableFromAccount(accountId),
+    const [accountInfo, accountDetails, accountTable, task] = await Promise.all(
+      [
+        getInfoFromAccount(accountId),
+        getDetailsFromAccount(accountId),
+        getTableFromAccount(accountId),
+        getTaskFromAccount(accountId, taskId),
+      ]
+    )
+
+    const [relatedTask, taskToUnlock] = await Promise.all([
+      getTaskFromAccount(accountId, task.related_task),
+      getTaskFromAccount(accountId, task.unlocks[0]),
     ])
 
     try {
-      await validateAccountData(accountInfo, accountDetails, accountTable)
+      await validateInput(
+        accountInfo,
+        accountDetails,
+        accountTable,
+        task,
+        relatedTask,
+        taskToUnlock
+      )
     } catch (validationError) {
       return res.status(400).json({
         error: 'Validation failed',
@@ -821,7 +865,7 @@ export default async function handler(req: Request, res: Response) {
 
     await enterFileNumberAndSolveCaptcha(
       page,
-      accountInfo.de_file_number,
+      getFileNumberFromTaskToUnlock(taskToUnlock),
       accountId,
       stepId,
       taskId
@@ -832,23 +876,12 @@ export default async function handler(req: Request, res: Response) {
       page,
       accountId,
       stepId,
-      taskId,
+      task,
+      relatedTask,
+      taskToUnlock,
       accountInfo,
       accountDetails,
       accountTable
-    )
-
-    console.log('current url', page.url())
-    const weAreHereBuffer = await page.screenshot({
-      fullPage: true,
-    })
-
-    await uploadFile(
-      accountId,
-      stepId,
-      taskId,
-      'we-are-here.png',
-      weAreHereBuffer
     )
     await context.close()
     res.status(200).json({ success: true, ...result })
@@ -904,4 +937,45 @@ async function initializeBrowser() {
       '--single-process',
     ],
   })
+}
+
+async function updateTaskWithSessionAndCost(
+  accountId: string,
+  task: any,
+  sessionNumber: string,
+  cost: string
+) {
+  const expirationDate = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000) // 14 days from now
+  if (task.body.includes('Session Number - ____________')) {
+    task.body = task.body.replace(
+      'Session Number - ____________',
+      `Session Number - ${sessionNumber}`
+    )
+  } else {
+    task.body = task.body.replace(
+      /Session Number - \d+/,
+      `Session Number - ${sessionNumber}`
+    )
+  }
+
+  if (task.body.includes('cost is $___.')) {
+    task.body = task.body.replace('cost is $___.', `cost is $${cost}.`)
+  } else {
+    task.body = task.body.replace(/cost is \$[\d,]+\./, `cost is $${cost}.`)
+  }
+
+  await setTaskForAccount(accountId, task.id, {
+    body: task.body,
+    label: `Pay Final Franchise Taxes by ${expirationDate.toLocaleDateString()}`,
+  })
+  return task
+}
+
+function getFileNumberFromTaskToUnlock(task: any) {
+  const body = task.body || ''
+  const fileNumberMatch = body.match(/File Number - (\d+)/)
+  if (!fileNumberMatch) {
+    throw new Error('File number not found in task body')
+  }
+  return fileNumberMatch[1].trim()
 }

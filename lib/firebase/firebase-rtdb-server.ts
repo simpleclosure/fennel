@@ -1,11 +1,5 @@
-import {
-  PlanTask,
-  SubmissionStatus,
-  SubmitType,
-} from '../../app/api/submit/de-dissolution'
-import { User } from '../types/global'
+import { PlanTask, SubmissionStatus, SubmitType, User } from '../types/global'
 import { db } from './firebase-config'
-
 function getUpdated() {
   return new Date().toLocaleDateString('en-GB', {
     year: '2-digit',

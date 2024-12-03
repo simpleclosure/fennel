@@ -15,7 +15,7 @@ import {
   getDownloadUrl,
   uploadFile,
 } from '../../../lib/firebase/firebase-storage'
-
+import { SubmissionStatus, SubmitType } from '../../../lib/types/global'
 const MAX_RETRIES = 3
 const RETRY_DELAY = 5000
 const DELAWARE_LOGIN_URL = 'https://icis.corp.delaware.gov/ecorp2/account/login'
@@ -800,24 +800,6 @@ enum DocumentRequestType {
 enum PaymentType {
   CREDITCARD = 'CREDITCARD',
   ACH = 'ACH',
-}
-
-export enum SubmissionStatus {
-  INITIAL = 'initial',
-  PENDING = 'pending',
-  PROCESSING = 'processing',
-  COMPLETED = 'completed',
-  FAILED = 'failed',
-}
-
-export enum SubmitType {
-  DE_DISSOLUTION = 'de_dissolution',
-  FL_PAYROLL = 'fl_payroll',
-}
-
-export type PlanTask = {
-  case_number: string
-  submission_status: SubmissionStatus
 }
 
 export type TimelineEvent = {
