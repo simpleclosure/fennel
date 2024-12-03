@@ -3,6 +3,7 @@ import {
   SubmissionStatus,
   SubmitType,
 } from '../../app/api/submit/de-dissolution'
+import { User } from '../types/global'
 import { db } from './firebase-config'
 
 function getUpdated() {
@@ -51,6 +52,10 @@ export async function getInfoFromAccount(aid: string) {
 
 export async function getDetailsFromAccount(aid: string) {
   return await getVal(`accounts/${aid}/details`)
+}
+
+export async function getTableFromAccount(aid: string) {
+  return await getVal(`accounts/${aid}/table`)
 }
 
 export async function getStepFromAccount(aid: string, stepId: string) {
@@ -103,4 +108,11 @@ export async function setStateSubmission(
     status,
     taskId,
   })
+}
+
+export async function getUser(uid: string): Promise<User> {
+  const user = await getVal('users/' + uid)
+  user.id = uid
+  user.name = `${user.first_name} ${user.last_name}`
+  return user
 }

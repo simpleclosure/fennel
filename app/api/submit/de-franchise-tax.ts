@@ -7,8 +7,9 @@ import {
   getDetailsFromAccount,
   getInfoFromAccount,
   getStepFromAccount,
+  getTableFromAccount,
   getTaskFromAccount,
-  getUserFromUid,
+  getUser,
 } from '../../../lib/firebase/firebase-rtdb-server'
 import { uploadFile } from '../../../lib/firebase/firebase-storage'
 
@@ -18,6 +19,72 @@ const DELAWARE_FRANCHISE_TAX_URL =
   'https://icis.corp.delaware.gov/ecorp/logintax.aspx?FilingType=FranchiseTax'
 let browser: any
 
+interface ValidationError {
+  message: string
+  field?: string
+}
+
+async function validateAccountData(
+  accountInfo: any,
+  accountDetails: any,
+  accountTable: any
+) {
+  const errors: ValidationError[] = []
+
+  if (!accountInfo?.de_file_number) {
+    errors.push({
+      field: 'de_file_number',
+      message: 'Delaware file number not found for this account',
+    })
+  }
+
+  if (!accountDetails?.company?.business_address1) {
+    errors.push({
+      field: 'business_address1',
+      message: 'Business address is required',
+    })
+  }
+  if (!accountDetails?.company?.business_address_city) {
+    errors.push({
+      field: 'business_address_city',
+      message: 'Business city is required',
+    })
+  }
+  if (!accountDetails?.company?.business_address_state) {
+    errors.push({
+      field: 'business_address_state',
+      message: 'Business state is required',
+    })
+  }
+  if (!accountDetails?.company?.business_address_zip) {
+    errors.push({
+      field: 'business_address_zip',
+      message: 'Business ZIP code is required',
+    })
+  }
+
+  if (!accountDetails?.company?.business_phone?.match(/^\d{10}$/)) {
+    errors.push({
+      field: 'business_phone',
+      message: 'Valid 10-digit business phone number is required',
+    })
+  }
+
+  if (
+    !accountTable?.boardmembers ||
+    Object.keys(accountTable.boardmembers).length === 0
+  ) {
+    errors.push({
+      field: 'boardmembers',
+      message: 'At least one board member is required',
+    })
+  }
+
+  if (errors.length > 0) {
+    throw new Error(JSON.stringify(errors))
+  }
+}
+
 async function solveCaptcha(page: any) {
   console.log('Starting captcha solving process...')
 
@@ -25,14 +92,11 @@ async function solveCaptcha(page: any) {
   const audioSrc = await audioElement.getAttribute('src')
   console.log('Found audio source:', audioSrc)
 
-  console.log('Fetching audio file...')
   const response = await axios.get(audioSrc, {
     responseType: 'arraybuffer',
   })
   const audioBuffer = response.data
-  console.log('Audio file size:', audioBuffer.byteLength, 'bytes')
 
-  console.log('Initializing Speech-to-Text client...')
   const base64 = process.env.GOOGLE_APPLICATION_CREDENTIALS_BASE64
   const credentials = JSON.parse(atob(base64!))
 
@@ -101,23 +165,50 @@ async function enterFileNumberAndSolveCaptcha(
   })
 
   await page.fill('#ctl00_ContentPlaceHolder1_txtPrimaryFileNo', fileNumber)
-  await solveCaptcha(page)
 
-  const screenshotBuffer = await page.screenshot({
-    fullPage: true,
-  })
+  let attempts = 0
+  while (attempts < MAX_RETRIES) {
+    try {
+      await solveCaptcha(page)
 
-  await uploadFile(
-    accountId,
-    stepId,
-    taskId,
-    'captcha-page.png',
-    screenshotBuffer
-  )
+      const screenshotBuffer = await page.screenshot({
+        fullPage: true,
+      })
 
-  await page.click('#ctl00_ContentPlaceHolder1_btnContinue')
-  await page.waitForLoadState('networkidle')
-  console.log('Successfully clicked to the termination date page')
+      await uploadFile(
+        accountId,
+        stepId,
+        taskId,
+        `captcha-page-attempt-${attempts + 1}.png`,
+        screenshotBuffer
+      )
+
+      await page.click('#ctl00_ContentPlaceHolder1_btnContinue')
+      await page.waitForLoadState('networkidle')
+
+      const continueButton = await page.$(
+        '#ctl00_ContentPlaceHolder1_btnContinue'
+      )
+      if (!continueButton) {
+        console.log('Successfully passed captcha check')
+        return
+      }
+
+      console.log(`Captcha attempt ${attempts + 1} failed, retrying...`)
+      attempts++
+
+      if (attempts >= MAX_RETRIES) {
+        throw new Error('Failed to solve captcha after maximum retries')
+      }
+    } catch (error) {
+      console.error(`Error during captcha attempt ${attempts + 1}:`, error)
+      attempts++
+
+      if (attempts >= MAX_RETRIES) {
+        throw error
+      }
+    }
+  }
 }
 
 async function fillAnticipatedTerminationDate(
@@ -130,7 +221,6 @@ async function fillAnticipatedTerminationDate(
 
   const futureDate = new Date()
   futureDate.setDate(futureDate.getDate() + 14)
-  console.log('Calculated future date:', futureDate)
 
   const formattedDate = futureDate
     .toLocaleDateString('en-US', {
@@ -147,11 +237,6 @@ async function fillAnticipatedTerminationDate(
   const screenshotBuffer = await page.screenshot({
     fullPage: true,
   })
-  console.log(
-    'Screenshot captured, size:',
-    screenshotBuffer.byteLength,
-    'bytes'
-  )
   await uploadFile(
     accountId,
     stepId,
@@ -174,13 +259,14 @@ async function fillAnticipatedTerminationDate(
   await page.waitForLoadState('networkidle')
 }
 
+//TODO in this method
 async function fillSharesInfo(
   page: any,
   accountId: string,
   taskId: string,
   accountInfo: any
 ) {
-  console.log('Starting fillSharesInfo...')
+  console.log('Starting to fill shares info...')
 
   const task = await getTaskFromAccount(accountId, taskId)
   const relatedTaskId = task.related_task
@@ -215,14 +301,7 @@ async function fillSharesInfo(
 
   const grossAssetSelector =
     '#ctl00_ContentPlaceHolder1_gridStock_ctl02_txtGrossAsset'
-  await page.fill(grossAssetSelector, '')
-  for (const char of grossAssetValue) {
-    await page.type(grossAssetSelector, char, { delay: 100 })
-  }
-  await page.evaluate((selector: string) => {
-    const element = document.querySelector(selector)
-    element?.dispatchEvent(new Event('blur'))
-  }, grossAssetSelector)
+  await page.fill(grossAssetSelector, grossAssetValue)
 
   const futureDate = new Date()
   futureDate.setDate(futureDate.getDate() + 14)
@@ -284,32 +363,37 @@ async function fillAddressInfo(page: any, accountDetails: any) {
   const stateSelector = '#ctl00_ContentPlaceHolder1_drpHidePrincipal'
   const zipSelector = '#ctl00_ContentPlaceHolder1_txtZipPrincipal'
 
-  let fullAddress = accountDetails.business_address1 || ''
+  let fullAddress = accountDetails.company.business_address1 || ''
   if (
-    accountDetails.business_address2 &&
-    !/^Box\s+\d+/.test(accountDetails.business_address2)
+    accountDetails.company.business_address2 &&
+    !/^Box\s+\d+/.test(accountDetails.company.business_address2)
   ) {
-    fullAddress += ` ${accountDetails.business_address2}`
+    fullAddress += ` ${accountDetails.company.business_address2}`
   }
 
   await page.fill(addressSelector, fullAddress.trim())
-  await page.fill(citySelector, accountDetails.business_address_city || '')
+  await page.fill(
+    citySelector,
+    accountDetails.company.business_address_city || ''
+  )
 
-  // Select the state from the dropdown
-  if (accountDetails.business_address_state) {
+  if (accountDetails.company.business_address_state) {
     await page.selectOption(
       stateSelector,
-      accountDetails.business_address_state
+      accountDetails.company.business_address_state
     )
   }
 
-  await page.fill(zipSelector, accountDetails.business_address_zip || '')
+  await page.fill(
+    zipSelector,
+    accountDetails.company.business_address_zip || ''
+  )
 
   console.log('Filled address info:', {
     address: fullAddress.trim(),
-    city: accountDetails.business_address_city,
-    state: accountDetails.business_address_state,
-    zip: accountDetails.business_address_zip,
+    city: accountDetails.company.business_address_city,
+    state: accountDetails.company.business_address_state,
+    zip: accountDetails.company.business_address_zip,
   })
 }
 
@@ -340,12 +424,119 @@ async function fillPhoneNumber(page: any, phoneNumber: string) {
   })
 }
 
-async function fillOfficerInformation(
+async function fillAuthorizationInfo(page: any, officerInfo: any) {
+  console.log('Starting fillAuthorizationInfo...')
+
+  const today = new Date()
+  const formattedDate = today.toLocaleDateString('en-US', {
+    month: '2-digit',
+    day: '2-digit',
+    year: 'numeric',
+  })
+
+  await page.fill(
+    '#ctl00_ContentPlaceHolder1_txtAuthorizationDate',
+    formattedDate
+  )
+
+  await page.fill(
+    '#ctl00_ContentPlaceHolder1_txtFirstAuthorization',
+    officerInfo.firstName || ''
+  )
+  await page.fill(
+    '#ctl00_ContentPlaceHolder1_txtLastAuthorization',
+    officerInfo.lastName || ''
+  )
+  await page.fill(
+    '#ctl00_ContentPlaceHolder1_txtTitleAuthorization',
+    officerInfo.title || ''
+  )
+
+  await page.fill(
+    '#ctl00_ContentPlaceHolder1_txtStreetAuthorization',
+    officerInfo.street || ''
+  )
+  await page.fill(
+    '#ctl00_ContentPlaceHolder1_txtCityAuthorization',
+    officerInfo.city || ''
+  )
+  await page.selectOption(
+    '#ctl00_ContentPlaceHolder1_drpHideAuthor',
+    officerInfo.state || ''
+  )
+  await page.fill(
+    '#ctl00_ContentPlaceHolder1_txtZipAuthorization',
+    officerInfo.zip || ''
+  )
+
+  await page.check('#ctl00_ContentPlaceHolder1_chkCertify')
+
+  console.log('Filled authorization information')
+}
+
+async function fillBoardMembers(
+  page: any,
+  boardmembers: any[],
+  accountDetails: any
+) {
+  console.log('Starting fillBoardMembers...')
+
+  const numDirectors = boardmembers.length
+  await page.fill(
+    '#ctl00_ContentPlaceHolder1_txtTotalNumOfDirectors',
+    numDirectors.toString()
+  )
+
+  await page.click('#btnDisplayDirectorForm')
+  await page.waitForLoadState('networkidle')
+
+  await page.waitForSelector('#txtDirectorName1', {
+    timeout: 10000,
+  })
+
+  for (let i = 0; i < boardmembers.length; i++) {
+    const directorNum = i + 1
+    const member = boardmembers[i]
+
+    const names = member.name ? member.name.split(' ') : []
+    const firstName = member.first_name || names[0] || ''
+    const lastName = member.last_name || names[names.length - 1] || ''
+
+    await page.type(`#txtDirectorName${directorNum}`, firstName)
+    await page.type(`#txtLastName${directorNum}`, lastName)
+
+    await page.type(
+      `#txtDirectorAddress${directorNum}`,
+      accountDetails.company.business_address1
+    )
+    await page.type(
+      `#txtDirectorCity${directorNum}`,
+      accountDetails.company.business_address_city
+    )
+    await page.selectOption(
+      `#drpDirectorStates${directorNum}`,
+      accountDetails.company.business_address_state
+    )
+    await page.type(
+      `#txtDirectorZip${directorNum}`,
+      accountDetails.company.business_address_zip
+    )
+  }
+}
+
+async function fillOfficerAuthorizationAndBoard(
   page: any,
   accountId: string,
-  taskId: string
+  taskId: string,
+  accountDetails: any,
+  boardmembers: any[]
 ) {
-  const officerInfo = await getOfficerInfo(accountId, taskId)
+  const officerInfo = await getOfficerInfo(
+    accountId,
+    taskId,
+    accountDetails,
+    boardmembers
+  )
   console.log('Starting fillOfficerInformation...')
 
   const firstNameSelector = '#ctl00_ContentPlaceHolder1_txtFirstOfficer'
@@ -362,12 +553,14 @@ async function fillOfficerInformation(
   await page.fill(streetSelector, officerInfo.street || '')
   await page.fill(citySelector, officerInfo.city || '')
 
-  // Select the state from the dropdown
   if (officerInfo.state) {
     await page.selectOption(stateSelector, officerInfo.state)
   }
 
   await page.fill(zipSelector, officerInfo.zip || '')
+
+  await fillBoardMembers(page, boardmembers, accountDetails)
+  await fillAuthorizationInfo(page, officerInfo)
 
   console.log('Filled officer information:', {
     firstName: officerInfo.firstName,
@@ -380,21 +573,42 @@ async function fillOfficerInformation(
   })
 }
 
-async function getOfficerInfo(accountId: string, taskId: string) {
+async function getOfficerInfo(
+  accountId: string,
+  taskId: string,
+  accountDetails: any,
+  boardmembers: any[]
+) {
+  console.log('Getting officer info...')
+  console.log('Boardmembers:', boardmembers)
   const task = await getTaskFromAccount(accountId, taskId)
   const relatedStepId = task.related_step
   const step = await getStepFromAccount(accountId, relatedStepId)
   const signerUid = step.signer_uid
-  const user = await getUserFromUid(signerUid)
+  const user = await getUser(signerUid)
+
+  const matchingBoardMember = boardmembers.find(
+    (member) => member.email.toLowerCase() === user.email.toLowerCase()
+  )
+
+  if (!matchingBoardMember) {
+    throw new Error(
+      `No matching board member found for user email: ${user.email}`
+    )
+  }
 
   return {
-    firstName: user.firstName,
-    lastName: user.lastName,
-    title: user.title,
-    street: user.street,
-    city: user.city,
-    state: user.state,
-    zip: user.zip,
+    firstName: user.first_name,
+    lastName: user.last_name,
+    title: matchingBoardMember.title,
+    street:
+      accountDetails.company.business_address1 +
+      (accountDetails.company.business_address2
+        ? ` ${accountDetails.company.business_address2}`
+        : ''),
+    city: accountDetails.company.business_address_city,
+    state: accountDetails.company.business_address_state,
+    zip: accountDetails.company.business_address_zip,
   }
 }
 
@@ -404,50 +618,166 @@ async function generateFranchiseTaxReport(
   stepId: string,
   taskId: string,
   accountInfo: any,
-  accountDetails: any
+  accountDetails: any,
+  accountTable: any
 ) {
   console.log('Starting generateFranchiseTaxReport...')
+  let attempts = 0
 
-  // Wait for page to be stable
-  await page.waitForLoadState('networkidle')
+  while (attempts < MAX_RETRIES) {
+    try {
+      await page.waitForLoadState('networkidle', { timeout: 30000 })
 
-  // Extract the zip code and address from the page
-  const pageZipCode = await page.$eval(
-    '#ctl00_ContentPlaceHolder1_lblZipData',
-    (element: any) => element.textContent?.trim()
-  )
-  const pageAddress = await page.$eval(
-    '#ctl00_ContentPlaceHolder1_lblAgentAddress',
-    (element: any) => element.textContent?.trim()
-  )
+      await page.waitForSelector('#ctl00_ContentPlaceHolder1_lblZipData', {
+        timeout: 10000,
+      })
+      await page.waitForSelector('#ctl00_ContentPlaceHolder1_lblAgentAddress', {
+        timeout: 10000,
+      })
 
-  if (pageZipCode === accountDetails.business_address_zip) {
-    const fullAddress =
-      `${accountDetails.business_address1} ${accountDetails.business_address2}`.trim()
-    if (pageAddress === fullAddress) {
-      throw new Error(
-        'Business address same as agent address, please update business address'
+      const pageZipCode = await page.$eval(
+        '#ctl00_ContentPlaceHolder1_lblZipData',
+        (element: any) => element.textContent?.trim()
       )
+      const pageAddress = await page.$eval(
+        '#ctl00_ContentPlaceHolder1_lblAgentAddress',
+        (element: any) => element.textContent?.trim()
+      )
+
+      if (pageZipCode === accountDetails.company.business_address_zip) {
+        const fullAddress =
+          `${accountDetails.company.business_address1} ${accountDetails.company.business_address2}`.trim()
+        if (pageAddress === fullAddress) {
+          throw new Error(
+            'Business address same as agent address, please update business address'
+          )
+        }
+      }
+
+      await fillSharesInfo(page, accountId, taskId, accountInfo)
+      await fillAddressInfo(page, accountDetails)
+      await fillPhoneNumber(page, accountDetails.company.business_phone)
+
+      await fillOfficerAuthorizationAndBoard(
+        page,
+        accountId,
+        taskId,
+        accountDetails,
+        Object.values(accountTable.boardmembers)
+      )
+
+      const screenshotBuffer = await page.screenshot({
+        fullPage: true,
+      })
+      await uploadFile(
+        accountId,
+        stepId,
+        taskId,
+        'franchise-tax-report.png',
+        screenshotBuffer
+      )
+      console.log('Successfully generated franchise tax report')
+
+      console.log('Saving session...')
+      await page.click('#ctl00_ContentPlaceHolder1_btnSaveSession')
+      console.log('Clicked save session')
+
+      await page.waitForLoadState('networkidle')
+      console.log('Waiting for first confirm button')
+      await page.waitForSelector('.remodal-confirm', {
+        timeout: 10000,
+      })
+      await page.click('.remodal-confirm')
+      console.log('Clicked first confirm button')
+      await page.waitForLoadState('networkidle')
+
+      const saveSessionScreenshot = await page.screenshot({
+        fullPage: true,
+      })
+      await uploadFile(
+        accountId,
+        stepId,
+        taskId,
+        'save-session.png',
+        saveSessionScreenshot
+      )
+
+      try {
+        console.log('Checking for second save session button')
+        await page.waitForSelector(
+          '#ctl00_ContentPlaceHolder1_btnSaveSession',
+          {
+            timeout: 5000,
+          }
+        )
+        await page.click('#ctl00_ContentPlaceHolder1_btnSaveSession')
+        console.log('Clicked second save session button')
+
+        await page.waitForLoadState('networkidle')
+        await page.waitForSelector('.remodal-confirm', {
+          timeout: 10000,
+        })
+        await page.click('.remodal-confirm')
+        console.log('Clicked second confirm button')
+        await page.waitForLoadState('networkidle')
+      } catch (error) {
+        console.log('No second save session button found, continuing...')
+      }
+
+      const saveSession2Screenshot = await page.screenshot({
+        fullPage: true,
+      })
+      await uploadFile(
+        accountId,
+        stepId,
+        taskId,
+        'save-session-2.png',
+        saveSession2Screenshot
+      )
+      // Wait for and extract both session number and expiration date
+      const sessionNumberSelector =
+        '#ctl00_ContentPlaceHolder1_lblSessionNumber'
+      const expiryDateSelector =
+        '#ctl00_ContentPlaceHolder1_lblsessionexpirydate'
+
+      await Promise.all([
+        page.waitForSelector(sessionNumberSelector, { timeout: 10000 }),
+        page.waitForSelector(expiryDateSelector, { timeout: 10000 }),
+      ])
+
+      const sessionNumber = await page.$eval(sessionNumberSelector, (el: any) =>
+        el.textContent?.trim()
+      )
+      const expiryDate = await page.$eval(expiryDateSelector, (el: any) =>
+        el.textContent?.trim()
+      )
+
+      console.log('Session number:', sessionNumber)
+      console.log('Expiry date:', expiryDate)
+
+      // Update the task with both session number and expiry date
+      // await updateTaskInAccount(accountId, taskId, {
+      //   session_number: sessionNumber,
+      //   session_expiry_date: expiryDate,
+      // })
+
+      return { sessionNumber, expiryDate }
+    } catch (error) {
+      attempts++
+      console.error(
+        `Attempt ${attempts} failed in generateFranchiseTaxReport:`,
+        error
+      )
+
+      if (attempts >= MAX_RETRIES) {
+        console.error('Max retries reached, throwing error')
+        throw error
+      }
+
+      console.log(`Waiting ${RETRY_DELAY}ms before retry...`)
+      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY))
     }
   }
-
-  await fillSharesInfo(page, accountId, taskId, accountInfo)
-  await fillAddressInfo(page, accountDetails)
-  await fillPhoneNumber(page, accountDetails.business_phone)
-
-  const officerInfo = await getOfficerInfo(accountId, taskId)
-  await fillOfficerInformation(page, officerInfo)
-
-  const screenshotBuffer = await page.screenshot({
-    fullPage: true,
-  })
-  await uploadFile(
-    accountId,
-    stepId,
-    taskId,
-    'franchise-tax-report.png',
-    screenshotBuffer
-  )
 }
 
 export default async function handler(req: Request, res: Response) {
@@ -455,6 +785,9 @@ export default async function handler(req: Request, res: Response) {
     return res.status(405).json({ error: 'Method not allowed' })
   }
   console.log(`Received request ${JSON.stringify(req.body)}`)
+
+  let page: any
+  let context: any
 
   try {
     const { accountId, stepId, taskId } = req.body
@@ -467,19 +800,24 @@ export default async function handler(req: Request, res: Response) {
       })
     }
 
-    const [accountInfo, accountDetails] = await Promise.all([
+    const [accountInfo, accountDetails, accountTable] = await Promise.all([
       getInfoFromAccount(accountId),
       getDetailsFromAccount(accountId),
+      getTableFromAccount(accountId),
     ])
-    if (!accountInfo?.de_file_number) {
-      return res
-        .status(400)
-        .json({ error: 'Delaware file number not found for this account' })
+
+    try {
+      await validateAccountData(accountInfo, accountDetails, accountTable)
+    } catch (validationError) {
+      return res.status(400).json({
+        error: 'Validation failed',
+        details: JSON.parse((validationError as Error).message),
+      })
     }
 
     await initializeBrowser()
-    const context = await browser.newContext()
-    const page = await context.newPage()
+    context = await browser.newContext()
+    page = await context.newPage()
 
     await enterFileNumberAndSolveCaptcha(
       page,
@@ -490,14 +828,16 @@ export default async function handler(req: Request, res: Response) {
     )
 
     await fillAnticipatedTerminationDate(page, accountId, stepId, taskId)
-    await generateFranchiseTaxReport(
+    const result = await generateFranchiseTaxReport(
       page,
       accountId,
       stepId,
       taskId,
       accountInfo,
-      accountDetails
+      accountDetails,
+      accountTable
     )
+
     console.log('current url', page.url())
     const weAreHereBuffer = await page.screenshot({
       fullPage: true,
@@ -511,10 +851,34 @@ export default async function handler(req: Request, res: Response) {
       weAreHereBuffer
     )
     await context.close()
-    res.status(200).json({ success: true })
-  } catch (error) {
-    console.error('Error processing request:', error)
-    res.status(500).json({ error: 'Error processing request' })
+    res.status(200).json({ success: true, ...result })
+  } catch (err) {
+    console.error('Error processing request:', err)
+
+    if (page) {
+      try {
+        const errorScreenshot = await page.screenshot({
+          fullPage: true,
+        })
+
+        await uploadFile(
+          req.body.accountId,
+          req.body.stepId,
+          req.body.taskId,
+          'error-state.png',
+          errorScreenshot
+        )
+      } catch (screenshotError) {
+        console.error('Failed to capture error screenshot:', screenshotError)
+      }
+    }
+
+    // Clean up browser context if it exists
+    if (context) {
+      await context.close().catch(console.error)
+    }
+
+    res.status(500).json({ error: 'Error processing request: ' + err })
   }
 }
 
