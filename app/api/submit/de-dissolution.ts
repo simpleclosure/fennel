@@ -15,7 +15,7 @@ import {
   getDownloadUrl,
   uploadFile,
 } from '../../../lib/firebase/firebase-storage'
-
+import { SubmissionStatus, SubmitType } from '../../../lib/types/global'
 const MAX_RETRIES = 3
 const RETRY_DELAY = 5000
 const DELAWARE_LOGIN_URL = 'https://icis.corp.delaware.gov/ecorp2/account/login'
@@ -33,13 +33,13 @@ export default async function handler(req: Request, res: Response) {
   }
   console.log(`Received request ${JSON.stringify(req.body)}`)
   try {
-    const { accountId, stepId, taskId, phaseId } = req.body
+    const { accountId, stepId, taskId } = req.body
 
-    if (!accountId || !stepId || !taskId || !phaseId) {
+    if (!accountId || !stepId || !taskId) {
       console.error('Missing required fields:', req.body)
       return res.status(400).json({
         error: 'Missing required fields',
-        required: ['accountId', 'stepId', 'taskId', 'phaseId'],
+        required: ['accountId', 'stepId', 'taskId'],
       })
     }
 
@@ -75,8 +75,7 @@ export default async function handler(req: Request, res: Response) {
       stepId,
       task,
       relatedTask,
-      relatedStep,
-      phaseId
+      relatedStep
     )
 
     if (!serviceRequestNumber) {
@@ -614,8 +613,7 @@ export async function submitDelawareForm(
   stepId: string,
   task: any,
   relatedTask: any,
-  relatedStep: any,
-  phaseId: string
+  relatedStep: any
 ) {
   let lastError
 
@@ -664,7 +662,6 @@ export async function submitDelawareForm(
           page,
           accountId,
           serviceRequestNumber,
-          phaseId,
           stepId,
           task,
           formScreenshotBuffer
@@ -739,7 +736,6 @@ async function handleScreenshots(
   page: any,
   accountId: string,
   serviceRequestNumber: string,
-  phaseId: string,
   stepId: string,
   task: any,
   formScreenshotBuffer: Buffer
@@ -748,7 +744,6 @@ async function handleScreenshots(
     fullPage: true,
   })
 
-  const storageRoute = `${phaseId}/${task.id}/Delaware-Dissolution`
   await Promise.all([
     uploadFile(accountId, stepId, task.id, `Form.png`, formScreenshotBuffer),
     uploadFile(
@@ -805,24 +800,6 @@ enum DocumentRequestType {
 enum PaymentType {
   CREDITCARD = 'CREDITCARD',
   ACH = 'ACH',
-}
-
-export enum SubmissionStatus {
-  INITIAL = 'initial',
-  PENDING = 'pending',
-  PROCESSING = 'processing',
-  COMPLETED = 'completed',
-  FAILED = 'failed',
-}
-
-export enum SubmitType {
-  DE_DISSOLUTION = 'de_dissolution',
-  FL_PAYROLL = 'fl_payroll',
-}
-
-export type PlanTask = {
-  case_number: string
-  submission_status: SubmissionStatus
 }
 
 export type TimelineEvent = {

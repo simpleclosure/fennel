@@ -1,0 +1,107 @@
+patterns:
+  - name: 'No Comments'
+    pattern: "(?://|/\\*)[^\n]*"
+    message: 'Comments are not allowed in this codebase'
+    files:
+      - '**/*.ts'
+      - '**/*.tsx'
+    type: 'error'
+
+rules:
+  # Core Firebase Configuration
+  - name: 'Firebase Config Rules'
+    files:
+      - lib/firebase/firebase-config.ts
+    provides:
+      - auth
+      - db
+      - storage
+    dependencies: []
+
+  # Firebase Storage Operations
+  - name: 'Firebase Storage Rules'
+    files:
+      - lib/firebase/firebase-storage.ts
+    provides:
+      - uploadFile
+      - getDownloadUrl
+    dependencies:
+      - lib/firebase/firebase-config.ts
+      - lib/firebase/firebase-rtdb-server.ts
+
+  # Firebase RTDB Operations
+  - name: 'Firebase RTDB Rules'
+    files:
+      - lib/firebase/firebase-rtdb-server.ts
+    provides:
+      - getInfoFromAccount
+      - getDetailsFromAccount
+      - getTableFromAccount
+      - getStepFromAccount
+      - getTaskFromAccount
+      - getUser
+    dependencies:
+      - lib/firebase/firebase-config.ts
+      - lib/types/global.ts
+
+  # Type Definitions
+  - name: 'Global Types'
+    files:
+      - lib/types/global.ts
+    provides:
+      - User
+    dependencies: []
+
+  # Constants
+  - name: 'Constants'
+    files:
+      - lib/consts.ts
+    provides:
+      - RETRYABLE_ERROR_PATTERNS
+    dependencies: []
+
+  # API Endpoint
+  - name: 'DE Franchise Tax API'
+    files:
+      - app/api/submit/de-franchise-tax.ts
+    provides:
+      - handler
+    dependencies:
+      - lib/firebase/firebase-rtdb-server.ts
+      - lib/firebase/firebase-storage.ts
+      - lib/types/global.ts
+      - lib/consts.ts
+
+suggestions:
+  - when: editing app/api/submit/de-franchise-tax.ts
+    suggest:
+      - lib/firebase/firebase-rtdb-server.ts
+      - lib/firebase/firebase-storage.ts
+      - lib/types/global.ts
+
+  - when: editing lib/firebase/firebase-rtdb-server.ts
+    suggest:
+      - lib/firebase/firebase-config.ts
+      - lib/types/global.ts
+
+  - when: editing lib/firebase/firebase-storage.ts
+    suggest:
+      - lib/firebase/firebase-config.ts
+      - lib/firebase/firebase-rtdb-server.ts
+
+contexts:
+  - name: 'Firebase Operations'
+    files:
+      - lib/firebase/firebase-config.ts
+      - lib/firebase/firebase-rtdb-server.ts
+      - lib/firebase/firebase-storage.ts
+
+  - name: 'Type System'
+    files:
+      - lib/types/global.ts
+      - lib/consts.ts
+
+  - name: 'API Implementation'
+    files:
+      - app/api/submit/de-franchise-tax.ts
+      - lib/firebase/firebase-rt
