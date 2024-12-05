@@ -32,4 +32,5 @@ export type PlanTask = {
   body: string
   case_number: string
   submission_status: SubmissionStatus
+  state: string
 }
