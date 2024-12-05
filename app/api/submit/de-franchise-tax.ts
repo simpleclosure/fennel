@@ -3,6 +3,7 @@ import axios from 'axios'
 import { Request, Response } from 'express'
 import { chromium } from 'playwright-extra'
 import StealthPlugin from 'puppeteer-extra-plugin-stealth'
+import { RETRYABLE_ERROR_PATTERNS } from '../../../lib/consts'
 import {
   getDetailsFromAccount,
   getInfoFromAccount,
@@ -26,21 +27,13 @@ interface ValidationError {
 }
 
 async function validateInput(
+  accountId: string,
   accountInfo: any,
   accountDetails: any,
   accountTable: any,
-  task: any,
-  relatedTask: any,
-  taskToUnlock: any
+  task: any
 ) {
   const errors: ValidationError[] = []
-
-  if (!accountInfo?.de_file_number) {
-    errors.push({
-      field: 'de_file_number',
-      message: 'Delaware file number not found for this account',
-    })
-  }
 
   if (!accountDetails?.company?.business_address1) {
     errors.push({
@@ -67,10 +60,10 @@ async function validateInput(
     })
   }
 
-  if (!accountDetails?.company?.business_phone?.match(/^\d{10}$/)) {
+  if (!accountDetails?.company?.business_phone) {
     errors.push({
       field: 'business_phone',
-      message: 'Valid 10-digit business phone number is required',
+      message: 'Business phone number is required',
     })
   }
 
@@ -91,6 +84,13 @@ async function validateInput(
     })
   }
 
+  if (!task.related_step) {
+    errors.push({
+      field: 'related_step',
+      message: 'Task must have a related step',
+    })
+  }
+
   if (
     !task.unlocks ||
     !Array.isArray(task.unlocks) ||
@@ -102,6 +102,12 @@ async function validateInput(
     })
   }
 
+  const [relatedTask, taskToUnlock, relatedStep] = await Promise.all([
+    getTaskFromAccount(accountId, task.related_task),
+    getTaskFromAccount(accountId, task.unlocks[0]),
+    getStepFromAccount(accountId, task.related_step),
+  ])
+
   if (!relatedTask?.invalue) {
     errors.push({
       field: 'related_task.invalue',
@@ -109,17 +115,35 @@ async function validateInput(
     })
   }
 
-  try {
-    getFileNumberFromTaskToUnlock(taskToUnlock)
-  } catch (error) {
+  if (!relatedStep?.signer_uid) {
     errors.push({
-      field: 'task_to_unlock.body',
-      message: 'Task to unlock must contain a file number in its body',
+      field: 'related_step.signer_uid',
+      message: 'Related step must have a signer uid set',
+    })
+  }
+
+  if (!accountInfo?.de_file_number) {
+    errors.push({
+      field: 'de_file_number',
+      message: 'DE File number is required',
+    })
+  }
+
+  if (!accountInfo?.box8_common_966) {
+    errors.push({
+      field: 'box8_common_966',
+      message: 'Number of common shares is required',
     })
   }
 
   if (errors.length > 0) {
     throw new Error(JSON.stringify(errors))
+  } else {
+    return {
+      relatedTask,
+      taskToUnlock,
+      relatedStep,
+    }
   }
 }
 
@@ -431,14 +455,11 @@ async function fillPhoneNumber(page: any, phoneNumber: string) {
   const phonePart2Selector = '#ctl00_ContentPlaceHolder1_txtPhonePrincipal2'
   const phonePart3Selector = '#ctl00_ContentPlaceHolder1_txtPhonePrincipal3'
 
-  if (phoneNumber.length !== 10) {
-    console.error('Invalid phone number length:', phoneNumber)
-    return
-  }
+  const cleanedNumber = phoneNumber.replace(/\D/g, '')
 
-  const part1 = phoneNumber.slice(0, 3)
-  const part2 = phoneNumber.slice(3, 6)
-  const part3 = phoneNumber.slice(6, 10)
+  const part1 = cleanedNumber.slice(0, 3)
+  const part2 = cleanedNumber.slice(3, 6)
+  const part3 = cleanedNumber.slice(6, 10)
 
   await page.fill(phonePart1Selector, part1)
   await page.fill(phonePart2Selector, part2)
@@ -553,14 +574,12 @@ async function fillBoardMembers(
 
 async function fillOfficerAuthorizationAndBoard(
   page: any,
-  accountId: string,
-  task: any,
+  relatedStep: any,
   accountDetails: any,
   boardmembers: any[]
 ) {
   const officerInfo = await getOfficerInfo(
-    accountId,
-    task,
+    relatedStep,
     accountDetails,
     boardmembers
   )
@@ -601,16 +620,13 @@ async function fillOfficerAuthorizationAndBoard(
 }
 
 async function getOfficerInfo(
-  accountId: string,
-  task: any,
+  relatedStep: any,
   accountDetails: any,
   boardmembers: any[]
 ) {
   console.log('Getting officer info...')
   console.log('Boardmembers:', boardmembers)
-  const relatedStepId = task.related_step
-  const step = await getStepFromAccount(accountId, relatedStepId)
-  const signerUid = step.signer_uid
+  const signerUid = relatedStep.signer_uid
   const user = await getUser(signerUid)
 
   const matchingBoardMember = boardmembers.find(
@@ -645,6 +661,7 @@ async function generateFranchiseTaxReport(
   task: any,
   relatedTask: any,
   taskToUnlock: any,
+  relatedStep: any,
   accountInfo: any,
   accountDetails: any,
   accountTable: any
@@ -688,8 +705,7 @@ async function generateFranchiseTaxReport(
 
       await fillOfficerAuthorizationAndBoard(
         page,
-        accountId,
-        task,
+        relatedStep,
         accountDetails,
         Object.values(accountTable.boardmembers)
       )
@@ -787,11 +803,23 @@ async function generateFranchiseTaxReport(
         accountId,
         taskToUnlock,
         sessionNumber,
-        amountDue
+        amountDue,
+        accountInfo.de_file_number
       )
 
-      return { sessionNumber, expiryDate }
+      return { sessionNumber, amountDue, expiryDate }
     } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error)
+      const shouldRetry = RETRYABLE_ERROR_PATTERNS.some((pattern) =>
+        pattern.test(errorMessage)
+      )
+
+      if (!shouldRetry) {
+        console.error('Non-retryable error encountered:', error)
+        throw error
+      }
+
       attempts++
       console.error(
         `Attempt ${attempts} failed in generateFranchiseTaxReport:`,
@@ -837,22 +865,23 @@ export default async function handler(req: Request, res: Response) {
         getTaskFromAccount(accountId, taskId),
       ]
     )
-
-    const [relatedTask, taskToUnlock] = await Promise.all([
-      getTaskFromAccount(accountId, task.related_task),
-      getTaskFromAccount(accountId, task.unlocks[0]),
-    ])
+    let relatedTask = null
+    let taskToUnlock = null
+    let relatedStep = null
 
     try {
-      await validateInput(
+      const relatedStepsAndTasks = await validateInput(
+        accountId,
         accountInfo,
         accountDetails,
         accountTable,
-        task,
-        relatedTask,
-        taskToUnlock
+        task
       )
+      relatedTask = relatedStepsAndTasks.relatedTask
+      taskToUnlock = relatedStepsAndTasks.taskToUnlock
+      relatedStep = relatedStepsAndTasks.relatedStep
     } catch (validationError) {
+      console.error('Validation failed:', validationError)
       return res.status(400).json({
         error: 'Validation failed',
         details: JSON.parse((validationError as Error).message),
@@ -865,7 +894,7 @@ export default async function handler(req: Request, res: Response) {
 
     await enterFileNumberAndSolveCaptcha(
       page,
-      getFileNumberFromTaskToUnlock(taskToUnlock),
+      accountInfo.de_file_number,
       accountId,
       stepId,
       taskId
@@ -879,12 +908,13 @@ export default async function handler(req: Request, res: Response) {
       task,
       relatedTask,
       taskToUnlock,
+      relatedStep,
       accountInfo,
       accountDetails,
       accountTable
     )
     await context.close()
-    res.status(200).json({ success: true, ...result })
+    res.status(200).json({ success: true, data: result })
   } catch (err) {
     console.error('Error processing request:', err)
 
@@ -943,9 +973,11 @@ async function updateTaskWithSessionAndCost(
   accountId: string,
   task: any,
   sessionNumber: string,
-  cost: string
+  cost: string,
+  deFileNumber: string
 ) {
   const expirationDate = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000) // 14 days from now
+
   if (task.body.includes('Session Number - ____________')) {
     task.body = task.body.replace(
       'Session Number - ____________',
@@ -958,24 +990,29 @@ async function updateTaskWithSessionAndCost(
     )
   }
 
+  if (task.body.includes('File Number - ____________')) {
+    task.body = task.body.replace(
+      'File Number - ____________',
+      `File Number - ${deFileNumber}`
+    )
+  }
+
   if (task.body.includes('cost is $___.')) {
     task.body = task.body.replace('cost is $___.', `cost is $${cost}.`)
   } else {
-    task.body = task.body.replace(/cost is \$[\d,]+\./, `cost is $${cost}.`)
+    task.body = task.body.replace(
+      /cost is \$[\d,]+(\.\d{2})?\./,
+      `cost is $${cost}.`
+    )
   }
+
+  const costValue = parseFloat(cost.replace(/[^0-9.-]+/g, ''))
+  const state = costValue < 3000 ? 'open' : 'locked'
 
   await setTaskForAccount(accountId, task.id, {
     body: task.body,
     label: `Pay Final Franchise Taxes by ${expirationDate.toLocaleDateString()}`,
+    state,
   })
   return task
-}
-
-function getFileNumberFromTaskToUnlock(task: any) {
-  const body = task.body || ''
-  const fileNumberMatch = body.match(/File Number - (\d+)/)
-  if (!fileNumberMatch) {
-    throw new Error('File number not found in task body')
-  }
-  return fileNumberMatch[1].trim()
 }

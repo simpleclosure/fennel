@@ -1,7 +1,17 @@
 export const RETRYABLE_ERROR_PATTERNS = [
-  '404',
-  'net::ERR_FAILED',
-  'net::ERR_CONNECTION_REFUSED',
-  'net::ERR_HTTP_RESPONSE_CODE_FAILURE',
-  'net::ERR_CONNECTION_TIMED_OUT',
-] as const
+  /network/i,
+  /timeout/i,
+  /disconnected/i,
+  /econnreset/i,
+  /socket hang up/i,
+  /ECONNREFUSED/i,
+  /ETIMEDOUT/i,
+  /ESOCKETTIMEDOUT/i,
+  /failed to fetch/i,
+  /net::ERR/i,
+  /Target closed/i,
+  /Navigation failed/i,
+  /Execution context was destroyed/i,
+  /Session closed/i,
+  /Target page, context or browser has been closed/i,
+]
