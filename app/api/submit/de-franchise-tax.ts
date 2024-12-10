@@ -248,6 +248,14 @@ async function enterFileNumberAndSolveCaptcha(
       await page.click('#ctl00_ContentPlaceHolder1_btnContinue')
       await page.waitForLoadState('networkidle')
 
+      const errorElement = await page.$('#ctl00_ContentPlaceHolder1_lblFtError')
+      if (errorElement) {
+        const errorText = await errorElement.textContent()
+        if (errorText === 'INVALID CORPORATION') {
+          throw new Error('Invalid corporation - DE file number not found')
+        }
+      }
+
       const continueButton = await page.$(
         '#ctl00_ContentPlaceHolder1_btnContinue'
       )
@@ -263,6 +271,13 @@ async function enterFileNumberAndSolveCaptcha(
         throw new Error('Failed to solve captcha after maximum retries')
       }
     } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === 'Invalid corporation - DE file number not found'
+      ) {
+        throw error
+      }
+
       console.error(`Error during captcha attempt ${attempts + 1}:`, error)
       attempts++
 
@@ -720,7 +735,9 @@ async function generateFranchiseTaxReport(
         'franchise-tax-report.png',
         screenshotBuffer
       )
-      console.log('Successfully generated franchise tax report')
+      console.log(
+        `Successfully generated franchise tax report for accountId: ${accountId}, stepId: ${stepId}, taskId: ${task.id}`
+      )
 
       console.log('Saving session...')
       await page.click('#ctl00_ContentPlaceHolder1_btnSaveSession')
@@ -841,7 +858,11 @@ export default async function handler(req: Request, res: Response) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
-  console.log(`Received request ${JSON.stringify(req.body)}`)
+  console.log(
+    `Received request to generate franchise tax report: ${JSON.stringify(
+      req.body
+    )}`
+  )
 
   let page: any
   let context: any
@@ -936,7 +957,6 @@ export default async function handler(req: Request, res: Response) {
       }
     }
 
-    // Clean up browser context if it exists
     if (context) {
       await context.close().catch(console.error)
     }
@@ -954,7 +974,6 @@ async function initializeBrowser() {
     }
   }
 
-  console.info('Launching browser')
   chromium.use(StealthPlugin())
 
   browser = await chromium.launch({

@@ -31,7 +31,9 @@ export default async function handler(req: Request, res: Response) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
-  console.log(`Received request ${JSON.stringify(req.body)}`)
+  console.log(
+    `Received request to submit dissolution form: ${JSON.stringify(req.body)}`
+  )
   try {
     const { accountId, stepId, taskId } = req.body
 
@@ -668,7 +670,7 @@ export async function submitDelawareForm(
         )
         await context.close()
         console.info(
-          `DE form submission successful for accountId: ${accountId}, taskId: ${task.taskId}, service request number: ${serviceRequestNumber}!`
+          `DE form submission successful for accountId: ${accountId}, taskId: ${task.id}, service request number: ${serviceRequestNumber}!`
         )
         await updateAccountRecords(
           accountId,
