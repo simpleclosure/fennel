@@ -336,7 +336,12 @@ async function fillAnticipatedTerminationDate(
   await page.waitForLoadState('networkidle')
 }
 
-async function fillSharesInfo(page: any, relatedTask: any, accountInfo: any) {
+async function fillSharesInfo(
+  page: any,
+  relatedTask: any,
+  accountInfo: any,
+  taxYear: string
+) {
   console.log('Starting to fill shares info...')
 
   const grossAssetValue = relatedTask.invalue?.toString().split('.')[0] || '0'
@@ -371,9 +376,16 @@ async function fillSharesInfo(page: any, relatedTask: any, accountInfo: any) {
     '#ctl00_ContentPlaceHolder1_gridStock_ctl02_txtGrossAsset'
   await page.fill(grossAssetSelector, grossAssetValue)
 
-  const futureDate = new Date()
-  futureDate.setDate(futureDate.getDate() + 14)
-  const futureDateNoSlashes = futureDate
+  let assetDate: Date
+  if (taxYear === 'Final') {
+    assetDate = new Date()
+    assetDate.setDate(assetDate.getDate() + 14)
+  } else {
+    const year = parseInt(taxYear)
+    assetDate = new Date(year, 11, 31)
+  }
+
+  const formattedDate = assetDate
     .toLocaleDateString('en-US', {
       month: '2-digit',
       day: '2-digit',
@@ -384,7 +396,7 @@ async function fillSharesInfo(page: any, relatedTask: any, accountInfo: any) {
   const assetDateSelector =
     '#ctl00_ContentPlaceHolder1_gridStock_ctl02_txtAssetDate'
   await page.fill(assetDateSelector, '')
-  for (const char of futureDateNoSlashes) {
+  for (const char of formattedDate) {
     await page.type(assetDateSelector, char, { delay: 100 })
   }
   await page.evaluate((selector: string) => {
@@ -394,7 +406,7 @@ async function fillSharesInfo(page: any, relatedTask: any, accountInfo: any) {
 
   console.log('Filled common shares:', commonShares)
   console.log('Filled gross asset value:', grossAssetValue)
-  console.log('Filled asset date:', futureDateNoSlashes)
+  console.log('Filled asset date:', formattedDate)
   await page.click('#ctl00_ContentPlaceHolder1_btnRecalucation')
   await page.waitForLoadState('networkidle')
 
@@ -649,6 +661,7 @@ async function getOfficerInfo(
   )
 
   if (!matchingBoardMember) {
+    //TODO: make this a 400 not a 500
     throw new Error(
       `No matching board member found for user email: ${user.email}`
     )
@@ -679,7 +692,8 @@ async function generateFranchiseTaxReport(
   relatedStep: any,
   accountInfo: any,
   accountDetails: any,
-  accountTable: any
+  accountTable: any,
+  taxYear: string
 ) {
   console.log('Starting generateFranchiseTaxReport...')
   let attempts = 0
@@ -714,7 +728,12 @@ async function generateFranchiseTaxReport(
         }
       }
 
-      const { amountDue } = await fillSharesInfo(page, relatedTask, accountInfo)
+      const { amountDue } = await fillSharesInfo(
+        page,
+        relatedTask,
+        accountInfo,
+        taxYear
+      )
       await fillAddressInfo(page, accountDetails)
       await fillPhoneNumber(page, accountDetails.company.business_phone)
 
@@ -821,7 +840,8 @@ async function generateFranchiseTaxReport(
         taskToUnlock,
         sessionNumber,
         amountDue,
-        accountInfo.de_file_number
+        accountInfo.de_file_number,
+        taxYear
       )
 
       return { sessionNumber, amountDue, expiryDate }
@@ -852,6 +872,69 @@ async function generateFranchiseTaxReport(
       await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY))
     }
   }
+}
+
+async function fileAnnualReport(
+  page: any,
+  taxYear: string,
+  accountId: string,
+  stepId: string,
+  taskId: string
+) {
+  console.log(`Starting annual report filing for tax year ${taxYear}...`)
+
+  // Wait for the table to be loaded
+  await page.waitForSelector(
+    '#ctl00_ContentPlaceHolder1_trPreviousYear, #ctl00_ContentPlaceHolder1_trCurrentYear'
+  )
+
+  // Find the row containing the target tax year
+  const rows = await page.$$('tr')
+  let targetLink = null
+
+  for (const row of rows) {
+    const yearSpan = await row.$('span[id*="Year"]')
+    if (yearSpan) {
+      const yearText = await yearSpan.textContent()
+      if (yearText.trim() === taxYear) {
+        // Find the link in this row
+        const link = await row.$('a[id*="lnkPrevAR"], a[id*="lnkCurrentAR"]')
+        if (link) {
+          const isDisabled = await link.getAttribute('disabled')
+          if (!isDisabled) {
+            targetLink = link
+            break
+          } else {
+            throw new Error(`Annual report filing for ${taxYear} is disabled`)
+          }
+        }
+      }
+    }
+  }
+
+  if (!targetLink) {
+    throw new Error(
+      `Could not find annual report filing link for tax year ${taxYear}`
+    )
+  }
+
+  // Take screenshot before clicking
+  const screenshotBuffer = await page.screenshot({
+    fullPage: true,
+  })
+  await uploadFile(
+    accountId,
+    stepId,
+    taskId,
+    `annual-report-${taxYear}-before.png`,
+    screenshotBuffer
+  )
+
+  // Click the link and wait for navigation
+  await targetLink.click()
+  await page.waitForLoadState('networkidle')
+
+  console.log(`Successfully clicked annual report link for tax year ${taxYear}`)
 }
 
 export default async function handler(req: Request, res: Response) {
@@ -921,7 +1004,18 @@ export default async function handler(req: Request, res: Response) {
       taskId
     )
 
-    await fillAnticipatedTerminationDate(page, accountId, stepId, taskId)
+    let taxYear = 'Final'
+    if (taskToUnlock.label.includes('Final')) {
+      await fillAnticipatedTerminationDate(page, accountId, stepId, taskId)
+    } else {
+      const yearMatch = taskToUnlock.label.match(/Pay (\d{4}) Franchise Taxes/)
+      if (!yearMatch) {
+        throw new Error('Could not determine tax year from task label')
+      }
+      taxYear = yearMatch[1]
+      console.log(`Processing franchise tax for year: ${taxYear}`)
+      await fileAnnualReport(page, taxYear, accountId, stepId, taskId)
+    }
     const result = await generateFranchiseTaxReport(
       page,
       accountId,
@@ -932,7 +1026,8 @@ export default async function handler(req: Request, res: Response) {
       relatedStep,
       accountInfo,
       accountDetails,
-      accountTable
+      accountTable,
+      taxYear
     )
     await context.close()
     res.status(200).json({ success: true, data: result })
@@ -993,7 +1088,8 @@ async function updateTaskWithSessionAndCost(
   task: any,
   sessionNumber: string,
   cost: string,
-  deFileNumber: string
+  deFileNumber: string,
+  taxYear: string
 ) {
   const expirationDate = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000) // 14 days from now
 
@@ -1016,6 +1112,13 @@ async function updateTaskWithSessionAndCost(
     )
   }
 
+  if (task.body.includes('File Number - _________')) {
+    task.body = task.body.replace(
+      'File Number - _________',
+      `File Number - ${deFileNumber}`
+    )
+  }
+
   if (task.body.includes('cost is $___.')) {
     task.body = task.body.replace('cost is $___.', `cost is $${cost}.`)
   } else {
@@ -1030,7 +1133,7 @@ async function updateTaskWithSessionAndCost(
 
   await setTaskForAccount(accountId, task.id, {
     body: task.body,
-    label: `Pay Final Franchise Taxes by ${expirationDate.toLocaleDateString()}`,
+    label: `Pay ${taxYear} Franchise Taxes by ${expirationDate.toLocaleDateString()}`,
     state,
   })
   return task
