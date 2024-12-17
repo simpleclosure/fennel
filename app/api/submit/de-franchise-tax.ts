@@ -199,6 +199,8 @@ async function solveCaptcha(page: any) {
     .split(' ')
     .map((word) => {
       if (/^\d+$/.test(word)) return word
+      if (word.toLowerCase() === 'climate') return 'L'
+      if (word.toLowerCase() === 'for') return '4'
       return word.charAt(0)
     })
     .join('')
