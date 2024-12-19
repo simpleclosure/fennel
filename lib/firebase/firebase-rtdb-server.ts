@@ -1,3 +1,4 @@
+import { TableType } from '../consts'
 import { PlanTask, SubmissionStatus, SubmitType, User } from '../types/global'
 import { db } from './firebase-config'
 function getUpdated() {
@@ -104,9 +105,33 @@ export async function setStateSubmission(
   })
 }
 
-export async function getUser(uid: string): Promise<User> {
+export async function getUser(uid: string): Promise<User | undefined> {
   const user = await getVal('users/' + uid)
+  if (!user || !Object.keys(user).length) return undefined
+
   user.id = uid
   user.name = `${user.first_name} ${user.last_name}`
   return user
+}
+
+export async function candidatesFromAccount(
+  account_id: string,
+  tableType: TableType
+) {
+  const table = await getTableFromAccount(account_id)
+  return transformObjectToArray(table[tableType] as any)
+}
+
+export function transformObjectToArray<T>(
+  inputObj: { [key: string]: T } = {},
+  property: string = 'id'
+): (T & Record<string, string>)[] {
+  if (!inputObj) return []
+
+  const transformed = Object.entries(inputObj).map(([key, value]) => ({
+    [property]: key,
+    ...value,
+  }))
+
+  return transformed
 }

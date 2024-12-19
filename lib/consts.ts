@@ -15,3 +15,8 @@ export const RETRYABLE_ERROR_PATTERNS = [
   /Session closed/i,
   /Target page, context or browser has been closed/i,
 ]
+
+export enum TableType {
+  SHAREHOLDERS = 'shareholders',
+  MEMBERS = 'boardmembers',
+}

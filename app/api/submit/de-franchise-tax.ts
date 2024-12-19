@@ -3,8 +3,9 @@ import axios from 'axios'
 import { Request, Response } from 'express'
 import { chromium } from 'playwright-extra'
 import StealthPlugin from 'puppeteer-extra-plugin-stealth'
-import { RETRYABLE_ERROR_PATTERNS } from '../../../lib/consts'
+import { RETRYABLE_ERROR_PATTERNS, TableType } from '../../../lib/consts'
 import {
+  candidatesFromAccount,
   getDetailsFromAccount,
   getInfoFromAccount,
   getStepFromAccount,
@@ -199,6 +200,8 @@ async function solveCaptcha(page: any) {
     .split(' ')
     .map((word) => {
       if (/^\d+$/.test(word)) return word
+      if (word.toLowerCase() === 'climate') return 'L'
+      if (word.toLowerCase() === 'for') return '4'
       return word.charAt(0)
     })
     .join('')
@@ -462,6 +465,7 @@ async function fillAddressInfo(page: any, accountDetails: any) {
     )
   }
 
+  // TODO: STRIP ZIP CODE SO SPACES ARE REMOVED AND 5 CHAR IS ENFORCED
   await page.fill(
     zipSelector,
     accountDetails.company.business_address_zip || ''
@@ -600,12 +604,14 @@ async function fillBoardMembers(
 }
 
 async function fillOfficerAuthorizationAndBoard(
+  accountId: string,
   page: any,
   relatedStep: any,
   accountDetails: any,
   boardmembers: any[]
 ) {
   const officerInfo = await getOfficerInfo(
+    accountId,
     relatedStep,
     accountDetails,
     boardmembers
@@ -647,39 +653,67 @@ async function fillOfficerAuthorizationAndBoard(
 }
 
 async function getOfficerInfo(
+  accountId: string,
   relatedStep: any,
   accountDetails: any,
   boardmembers: any[]
 ) {
-  console.log('Getting officer info...')
-  console.log('Boardmembers:', boardmembers)
   const signerUid = relatedStep.signer_uid
   const user = await getUser(signerUid)
-
-  const matchingBoardMember = boardmembers.find(
-    (member) => member.email.toLowerCase() === user.email.toLowerCase()
-  )
-
-  if (!matchingBoardMember) {
-    //TODO: make this a 400 not a 500
-    throw new Error(
-      `No matching board member found for user email: ${user.email}`
+  if (user && user.email) {
+    console.info(
+      `Found user the old way: ${user.email}, accountId: ${accountId}`
     )
-  }
+    const matchingBoardMember = boardmembers.find(
+      (member) => member.email.toLowerCase() === user.email.toLowerCase()
+    )
 
-  return {
-    firstName: user.first_name,
-    lastName: user.last_name,
-    title: matchingBoardMember.title,
-    street:
-      accountDetails.company.business_address1 +
-      (accountDetails.company.business_address2
-        ? ` ${accountDetails.company.business_address2}`
-        : ''),
-    city: accountDetails.company.business_address_city,
-    state: accountDetails.company.business_address_state,
-    zip: accountDetails.company.business_address_zip,
+    if (!matchingBoardMember) {
+      //TODO: make this a 400 not a 500
+      throw new Error(
+        `No matching board member found for user email: ${user.email}`
+      )
+    }
+
+    return {
+      firstName: user.first_name,
+      lastName: user.last_name,
+      title: matchingBoardMember.title,
+      street:
+        accountDetails.company.business_address1 +
+        (accountDetails.company.business_address2
+          ? ` ${accountDetails.company.business_address2}`
+          : ''),
+      city: accountDetails.company.business_address_city,
+      state: accountDetails.company.business_address_state,
+      zip: accountDetails.company.business_address_zip,
+    }
   }
+  const members = await candidatesFromAccount(accountId, TableType.MEMBERS)
+  console.info(
+    `Found members: ${JSON.stringify(members)}, accountId: ${accountId}`
+  )
+  console.info(`Found signerUid: ${signerUid}, accountId: ${accountId}`)
+  const match = members.find((candidate) => candidate.id === signerUid)
+  if (match) {
+    console.info(
+      `Found user the new way: ${match.name}, accountId: ${accountId}`
+    )
+    return {
+      firstName: match.name.split(' ')[0],
+      lastName: match.name.split(' ')[1],
+      title: match.title,
+      street:
+        accountDetails.company.business_address1 +
+        (accountDetails.company.business_address2
+          ? ` ${accountDetails.company.business_address2}`
+          : ''),
+      city: accountDetails.company.business_address_city,
+      state: accountDetails.company.business_address_state,
+      zip: accountDetails.company.business_address_zip,
+    }
+  }
+  throw new Error(`No matching board member found for user: ${signerUid}`)
 }
 
 async function generateFranchiseTaxReport(
@@ -738,6 +772,7 @@ async function generateFranchiseTaxReport(
       await fillPhoneNumber(page, accountDetails.company.business_phone)
 
       await fillOfficerAuthorizationAndBoard(
+        accountId,
         page,
         relatedStep,
         accountDetails,
